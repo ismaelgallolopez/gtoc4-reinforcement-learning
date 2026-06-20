@@ -14,7 +14,7 @@ MJD_J2000 = 51544.5  # MJD of J2000 epoch
 def mjd_to_et(mjd: float):
     return (mjd - MJD_J2000) * 86400.0
 
-def parse_asteroids(filepath: str):
+def parse_asteroids(filepath: str, n_asteroids: int = None):
     asteroids = []
     with open(filepath) as f:
         for line in f:
@@ -37,6 +37,8 @@ def parse_asteroids(filepath: str):
                 'omega': np.deg2rad(float(m.group(7))),
                 'M0':    np.deg2rad(float(m.group(8))),
             })
+            if n_asteroids and len(asteroids) >= n_asteroids:
+                break
     return asteroids
 
 def build_bodies(asteroids: list[dict]):

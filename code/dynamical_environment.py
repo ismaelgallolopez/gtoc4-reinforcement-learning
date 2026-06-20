@@ -11,10 +11,12 @@ from tudatpy.math import interpolators
 from problem_parameters import * # the problem parameters from the description
 from auxiliary_functions import * 
 
-spice.load_standard_kernels()
+ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
+# n_asteroids = 1 # optional, to limit the number of asteroids when testing
+n_asteroids = None # set to None to load all asteroids
 
-asteroids = parse_asteroids("../data/gtoc4_problem_data.txt")
-# print(asteroids[0]) # debugging
+asteroids = parse_asteroids(ASTEROIDS_FILEPATH, n_asteroids)
+# print(asteroids) # debugging
 
 bodies    = build_bodies(asteroids)
 names     = [f"ast_{a['name']}" for a in asteroids]
