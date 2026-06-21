@@ -1,7 +1,8 @@
 import os
 import numpy as np
+import matplotlib.pyplot as plt
 
-from tudatpy import constants
+from tudatpy import constants, util
 from tudatpy.astro import element_conversion, two_body_dynamics, time_representation
 from tudatpy.dynamics import environment_setup, environment, propagation_setup, simulator
 from tudatpy.data import save2txt
@@ -13,7 +14,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-n_asteroids = 1 # optional, to limit the number of asteroids when testing
+n_asteroids = 5 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -91,7 +92,7 @@ system_initial_state = np.hstack((spacecraft_initial_state_cartesian,
 # print("Initial state of the spacecraft (cartesian):", spacecraft_initial_state_cartesian) # debugging
 
 # integrator settings
-time_step = 10000.0 # s, dummy value for now, will need to be tuned
+time_step = 1e7 # s, dummy value for now, will need to be tuned
 # fixed step RK4 integrator used for simplicity, later to be implemented in a more sophisticated method (TODO)
 integrator_settings = propagation_setup.integrator.runge_kutta_fixed_step( 
     time_step = time_step,
@@ -131,6 +132,8 @@ mass_rate_models = propagation_setup.create_mass_rate_models(
     acceleration_models
 )
 
+mass_variables_to_save = [propagation_setup.dependent_variable.body_mass('spacecraft')]
+
 mass_propagator_settings = propagation_setup.propagator.mass(
     ['spacecraft'], # because only the spacecraft has a mass variation
     mass_rate_models,
@@ -138,7 +141,7 @@ mass_propagator_settings = propagation_setup.propagator.mass(
     start_epoch,
     integrator_settings,
     termination_settings,
-    )
+)
 
 # multitype propagator settings (translational + mass)
 propagator_settings_list = [
@@ -146,11 +149,15 @@ propagator_settings_list = [
     mass_propagator_settings
 ]
 
+variables_to_save_list = mass_variables_to_save
+# print("Variables to save:", variables_to_save_list) # debugging
+
 propagator_settings = propagation_setup.propagator.multitype(
     propagator_settings_list,
     integrator_settings,
     start_epoch,
     termination_settings,
+    variables_to_save_list
 )
 
 propagator_settings.print_settings.print_initial_and_final_conditions = True
@@ -165,4 +172,33 @@ propagation_results = dynamics_simulator.propagation_results
 
 # Extract numerical solution for states and dependent variables
 state_history = propagation_results.state_history
+
+dependent_variables_dict = propagation_results.dependent_variable_history
+# print("Dependent variables:", dependent_variables) # debugging
+
+# saving the results
+results_directory = "./results"
+
+save2txt(
+    solution=state_history, filename="PropagationHistory.dat", directory=results_directory
+)
+
+save2txt(
+    solution=dependent_variables_dict,
+    filename="PropagationHistory_DependentVariables.dat",
+    directory=results_directory,
+)
+
+# extracting dependent variables
+dep_var_ids = propagation_results.dependent_variable_ids
+
+# for start_index, settings in dep_var_ids.items(): print(f"Index {start_index} -> {settings}") # debugging 
+
+dependent_variables = util.result2array(dependent_variables_dict)
+
+mass_history = dependent_variables[:, 1] # because only one dependent variable (the mass of the spacecraft)
+print("Mass history:", mass_history) # debugging
+# plotting the results
+plt.plot(mass_history)
+plt.show()
 
