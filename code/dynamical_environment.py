@@ -13,7 +13,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-n_asteroids = 5 # optional, to limit the number of asteroids when testing
+n_asteroids = 1 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -91,7 +91,7 @@ system_initial_state = np.hstack((spacecraft_initial_state_cartesian,
 # print("Initial state of the spacecraft (cartesian):", spacecraft_initial_state_cartesian) # debugging
 
 # integrator settings
-time_step = 100.0 # s, dummy value for now, will need to be tuned
+time_step = 10000.0 # s, dummy value for now, will need to be tuned
 # fixed step RK4 integrator used for simplicity, later to be implemented in a more sophisticated method (TODO)
 integrator_settings = propagation_setup.integrator.runge_kutta_fixed_step( 
     time_step = time_step,
@@ -140,6 +140,7 @@ mass_propagator_settings = propagation_setup.propagator.mass(
     termination_settings,
     )
 
+# multitype propagator settings (translational + mass)
 propagator_settings_list = [
     translational_propagator_settings,
     mass_propagator_settings
@@ -151,3 +152,17 @@ propagator_settings = propagation_setup.propagator.multitype(
     start_epoch,
     termination_settings,
 )
+
+propagator_settings.print_settings.print_initial_and_final_conditions = True
+
+# propagate orbit
+dynamics_simulator = simulator.create_dynamics_simulator(
+    bodies, propagator_settings
+)
+
+# Retrieve all data produced by simulation
+propagation_results = dynamics_simulator.propagation_results
+
+# Extract numerical solution for states and dependent variables
+state_history = propagation_results.state_history
+
