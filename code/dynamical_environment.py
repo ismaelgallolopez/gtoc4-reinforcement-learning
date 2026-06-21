@@ -111,7 +111,8 @@ acceleration_models = propagation_setup.create_acceleration_models(
 # Create propagation settings.
 termination_settings = propagation_setup.propagator.time_termination(end_epoch)
 
-propagator_settings = propagation_setup.propagator.translational(
+# translational propagator settings
+translational_propagator_settings = propagation_setup.propagator.translational(
     central_bodies,
     acceleration_models,
     bodies_to_propagate,
@@ -120,4 +121,33 @@ propagator_settings = propagation_setup.propagator.translational(
     integrator_settings,
     termination_settings,
     # output_variables=dependent_variables_to_save,
+)
+
+# mass propagation settings
+mass_rate_settings = dict(spacecraft=[propagation_setup.mass_rate.from_thrust()])
+mass_rate_models = propagation_setup.create_mass_rate_models(
+    bodies, 
+    mass_rate_settings, 
+    acceleration_models
+)
+
+mass_propagator_settings = propagation_setup.propagator.mass(
+    ['spacecraft'], # because only the spacecraft has a mass variation
+    mass_rate_models,
+    [spacecraft_wet_mass],
+    start_epoch,
+    integrator_settings,
+    termination_settings,
+    )
+
+propagator_settings_list = [
+    translational_propagator_settings,
+    mass_propagator_settings
+]
+
+propagator_settings = propagation_setup.propagator.multitype(
+    propagator_settings_list,
+    integrator_settings,
+    start_epoch,
+    termination_settings,
 )
