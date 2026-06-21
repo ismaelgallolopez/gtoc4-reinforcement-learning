@@ -72,3 +72,16 @@ earth_initial_state_cartesian = element_conversion.keplerian_to_cartesian(earth_
 excess_velocity_vector = np.array([scape_velocity_max, 0, 0]) # dummy direction
 delta_state_departure = np.hstack((np.zeros(3), excess_velocity_vector)) # only velocity change, no position change
 spacecraft_initial_state_cartesian = earth_initial_state_cartesian + delta_state_departure
+
+# print("Initial state of the Earth (cartesian):", earth_initial_state_cartesian) # debugging
+# print("Initial state of the spacecraft (cartesian):", spacecraft_initial_state_cartesian) # debugging
+
+# integrator settings
+time_step = 100.0 # s, dummy value for now, will need to be tuned
+# fixed step RK4 integrator used for simplicity, later to be implemented in a more sophisticated method (TODO)
+integrator_settings = propagation_setup.integrator.runge_kutta_fixed_step( 
+    time_step = time_step,
+    coefficients_set = propagation_setup.integrator.CoefficientSets.rk_4
+)
+
+
