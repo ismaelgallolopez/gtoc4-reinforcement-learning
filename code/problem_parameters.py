@@ -25,3 +25,6 @@ epoch = 54000.0 # MJD2000
 # constraints on the rendevouz/flyby
 accuracy_position = 1000.0e3 # m
 accuracy_velocity = 1.0 # m/s (only for rendezvous)
+
+# constants and conversion (from the problem statement)
+sun_gravitational_parameter = 132712440018e9 # m^3/s^2

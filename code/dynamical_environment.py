@@ -62,3 +62,13 @@ acceleration_settings_spacecraft = dict(
 # )
 
 acceleration_settings = { 'spacecraft': acceleration_settings_spacecraft }
+
+# computing the initial state of the spacecraft
+true_anomaly_earth = element_conversion.mean_to_true_anomaly(eccentricity_earth, mean_anomaly_earth) # convertion needed for the tudat conversion function
+earth_initial_state_keplerian = np.array([a_earth, eccentricity_earth, inclination_earth, lan_earth, arg_periapsis_earth, true_anomaly_earth])
+
+earth_initial_state_cartesian = element_conversion.keplerian_to_cartesian(earth_initial_state_keplerian, sun_gravitational_parameter)
+
+excess_velocity_vector = np.array([scape_velocity_max, 0, 0]) # dummy direction
+delta_state_departure = np.hstack((np.zeros(3), excess_velocity_vector)) # only velocity change, no position change
+spacecraft_initial_state_cartesian = earth_initial_state_cartesian + delta_state_departure
