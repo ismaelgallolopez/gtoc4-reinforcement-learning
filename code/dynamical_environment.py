@@ -14,7 +14,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-n_asteroids = 1 # optional, to limit the number of asteroids when testing
+# n_asteroids = 1 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -45,9 +45,9 @@ environment_setup.add_rotation_model(
     bodies, 
     'spacecraft', 
     environment_setup.rotation_model.custom_inertial_direction_based(
-        lambda time : np.array([1,0,0] ), # inertial_body_axis_direction
+        thrust_direction_function, # inertial_body_axis_direction
         'ECLIPJ2000', # base_frame
-        'VehcleFixed' # target_frame
+        'VehicleFixed' # target_frame
         ) 
     )
 
@@ -55,17 +55,12 @@ environment_setup.add_rotation_model(
 # setup the acceleration model
 acceleration_settings_spacecraft = dict(
     Sun=[propagation_setup.acceleration.point_mass_gravity()], 
-    spacecraft=[    propagation_setup.acceleration.thrust_from_all_engines()]
+    spacecraft=[propagation_setup.acceleration.thrust_from_all_engines()]
     )
 
 acceleration_settings_asteroids = dict(
     Sun=[propagation_setup.acceleration.point_mass_gravity()]
 )
-
-# thrust_direction_settings = propagation_setup.thrust.custom_thrust_orientation(
-#     thrust_direction_function
-# )
-
 
 # computing the initial state of the spacecraft
 true_anomaly_earth = element_conversion.mean_to_true_anomaly(eccentricity_earth, mean_anomaly_earth) # convertion needed for the tudat conversion function
