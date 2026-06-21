@@ -14,7 +14,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-n_asteroids = 5 # optional, to limit the number of asteroids when testing
+n_asteroids = 1 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -92,7 +92,7 @@ system_initial_state = np.hstack((spacecraft_initial_state_cartesian,
 # print("Initial state of the spacecraft (cartesian):", spacecraft_initial_state_cartesian) # debugging
 
 # integrator settings
-time_step = 1e7 # s, dummy value for now, will need to be tuned
+time_step = 1e4 # s, dummy value for now, will need to be tuned
 # fixed step RK4 integrator used for simplicity, later to be implemented in a more sophisticated method (TODO)
 integrator_settings = propagation_setup.integrator.runge_kutta_fixed_step( 
     time_step = time_step,
@@ -197,8 +197,28 @@ dep_var_ids = propagation_results.dependent_variable_ids
 dependent_variables = util.result2array(dependent_variables_dict)
 
 mass_history = dependent_variables[:, 1] # because only one dependent variable (the mass of the spacecraft)
-print("Mass history:", mass_history) # debugging
+# print("Mass history:", mass_history) # debugging
+
+
 # plotting the results
 plt.plot(mass_history)
-plt.show()
+# plt.show()
 
+spacecraft_position = util.result2array(state_history)[:, 1:4] / constants.ASTRONOMICAL_UNIT 
+
+# Plot
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(spacecraft_position[:, 0], spacecraft_position[:, 1], spacecraft_position[:, 2], 'b-')
+ax.scatter(0, 0, 0, color='yellow', s=200, marker='*', label='Sun')
+ax.scatter(spacecraft_position[0, 0], spacecraft_position[0, 1], spacecraft_position[0, 2], 
+           color='green', s=50, label='Start')
+ax.scatter(spacecraft_position[-1, 0], spacecraft_position[-1, 1], spacecraft_position[-1, 2], 
+           color='red', s=50, label='End')
+ax.set_xlabel('X (AU)')
+ax.set_ylabel('Y (AU)')
+ax.set_zlabel('Z (AU)')
+ax.set_title('Spacecraft Trajectory')
+ax.legend()
+ax.grid(True, alpha=0.3)
+plt.show()
