@@ -2,7 +2,7 @@ import os
 import numpy as np
 
 from tudatpy import constants
-from tudatpy.astro import element_conversion, two_body_dynamics
+from tudatpy.astro import element_conversion, two_body_dynamics, time_representation
 from tudatpy.dynamics import environment_setup, environment, propagation_setup, simulator
 from tudatpy.data import save2txt
 from tudatpy.interface import spice
@@ -12,11 +12,53 @@ from problem_parameters import * # the problem parameters from the description
 from auxiliary_functions import * 
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
-# n_asteroids = 1 # optional, to limit the number of asteroids when testing
 n_asteroids = None # set to None to load all asteroids
+n_asteroids = 1 # optional, to limit the number of asteroids when testing
+
+# fixed epoch for first iterations, later will work on implementing the variable one (TODO)
+start_epoch = launch_interval[0]
+end_epoch = start_epoch + time_mission_max
 
 asteroids = parse_asteroids(ASTEROIDS_FILEPATH, n_asteroids)
 # print(asteroids) # debugging
 
 bodies    = build_bodies(asteroids)
 names     = [f"ast_{a['name']}" for a in asteroids]
+
+bodies_to_propagate = ['spacecraft'] + names
+# print("Bodies to propagate:", bodies_to_propagate) # debugging
+
+central_bodies = ['Sun']
+
+
+# setup the thrust model
+thrust_magnitude_settings = (propagation_setup.thrust.custom_thrust_magnitude_fixed_isp(
+    thrust_magnitude_function= thrust_magnitude_function,
+    specific_impulse=Isp_engine # TODO: CHECK IF THE MODEL USES s AS UNIT FOR THIS
+))
+
+environment_setup.add_engine_model(
+    'spacecraft', 'LowThrustEngine', thrust_magnitude_settings, bodies )
+
+environment_setup.add_rotation_model(
+    bodies, 
+    'spacecraft', 
+    environment_setup.rotation_model.custom_inertial_direction_based(
+        lambda time : np.array([1,0,0] ), # inertial_body_axis_direction
+        'ECLIPJ2000', # base_frame
+        'VehcleFixed' # target_frame
+        ) 
+    )
+
+
+# setup the acceleration model
+acceleration_settings_spacecraft = dict(
+    Sun=[propagation_setup.acceleration.point_mass_gravity()], 
+    spacecraft=[    propagation_setup.acceleration.thrust_from_all_engines()]
+    )
+
+# thrust_direction_settings = propagation_setup.thrust.custom_thrust_orientation(
+#     thrust_direction_function
+# )
+
+acceleration_settings = { 'spacecraft': acceleration_settings_spacecraft }
