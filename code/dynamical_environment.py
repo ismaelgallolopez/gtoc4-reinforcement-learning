@@ -14,7 +14,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-# n_asteroids = 1 # optional, to limit the number of asteroids when testing
+n_asteroids = 1 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -88,10 +88,26 @@ system_initial_state = np.hstack((spacecraft_initial_state_cartesian,
 
 # integrator settings
 time_step = 1e4 # s, dummy value for now, will need to be tuned
+block_indices=[(0, 0, 3, 1), (3, 0, 3, 1)]
+tolerance=1e-10 # both absolute and relative
+
+step_size_control_settings = propagation_setup.integrator.step_size_control_blockwise_scalar_tolerance(
+    block_indices = block_indices,
+    relative_error_tolerance = tolerance,
+    absolute_error_tolerance = tolerance
+)
+
+step_size_validation_settings = propagation_setup.integrator.step_size_validation(
+    minimum_step = 1.0, # s
+    maximum_step = np.inf, # s
+)
+
 # fixed step RK4 integrator used for simplicity, later to be implemented in a more sophisticated method (TODO)
-integrator_settings = propagation_setup.integrator.runge_kutta_fixed_step( 
-    time_step = time_step,
-    coefficient_set = propagation_setup.integrator.CoefficientSets.rk_4
+integrator_settings = propagation_setup.integrator.runge_kutta_variable_step( 
+    initial_time_step = time_step,
+    coefficient_set = propagation_setup.integrator.CoefficientSets.rkf_78,
+    step_size_control_settings = step_size_control_settings, 
+    step_size_validation_settings = step_size_validation_settings,
 )
 
 # acceleration settings
