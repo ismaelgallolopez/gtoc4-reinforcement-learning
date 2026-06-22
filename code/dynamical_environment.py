@@ -14,7 +14,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-n_asteroids = 500 # optional, to limit the number of asteroids when testing
+# n_asteroids = 500 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -100,8 +100,10 @@ time_step = 1e4 # s, dummy value for now, will need to be tuned
 # to pass perihelion in single 14-day steps at ~100 km/s, gaining phantom orbital energy and escaping.
 n_translational_bodies = len(bodies_to_propagate)
 # State is a (6*N, 1) column vector: rows 0-5 = spacecraft, rows 6-11 = asteroid 0, etc.
-# A single block covering all 6*N rows ensures every body controls the step size.
-block_indices = [(0, 0, 6 * n_translational_bodies, 1)]
+# Two blocks per body: position (rows 6i..6i+2) and velocity (rows 6i+3..6i+5).
+block_indices = [(6*i + offset, 0, 3, 1)
+                 for i in range(n_translational_bodies)
+                 for offset in (0, 3)]
 tolerance=1e-10 # both absolute and relative
 
 step_size_control_settings = propagation_setup.integrator.step_size_control_blockwise_scalar_tolerance(
