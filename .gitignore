@@ -222,3 +222,5 @@ __marimo__/
 # subfolders
 code/results/
 *.dat
+.claude/
+figures/
