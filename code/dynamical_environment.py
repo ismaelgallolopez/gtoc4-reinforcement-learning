@@ -14,7 +14,7 @@ from auxiliary_functions import *
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
-n_asteroids = 1 # optional, to limit the number of asteroids when testing
+n_asteroids = 500 # optional, to limit the number of asteroids when testing
 
 # fixed epoch for first iterations, later will work on implementing the variable one (TODO)
 start_epoch = launch_interval[0]
@@ -72,8 +72,15 @@ excess_velocity_vector = np.array([scape_velocity_max, 0, 0]) # dummy direction
 delta_state_departure = np.hstack((np.zeros(3), excess_velocity_vector)) # only velocity change, no position change
 spacecraft_initial_state_cartesian = earth_initial_state_cartesian + delta_state_departure
 
-# initial state of the asteroids 
-true_anomalies_asteroids = [element_conversion.mean_to_true_anomaly(ast['e'], ast['M0']) for ast in asteroids]
+# initial state of the asteroids
+# Propagate M0 from the catalog epoch (ast['epoch']) to the simulation start epoch
+# before converting to Cartesian, to place asteroids at their correct 2015 positions.
+true_anomalies_asteroids = []
+for ast in asteroids:
+    delta_t = start_epoch - ast['epoch']  # seconds from catalog epoch to sim start
+    n = np.sqrt(sun_gravitational_parameter / ast['a']**3)  # mean motion (rad/s)
+    M_at_start = (ast['M0'] + n * delta_t) % (2 * np.pi)
+    true_anomalies_asteroids.append(element_conversion.mean_to_true_anomaly(ast['e'], M_at_start))
 asteroids_initial_states_keplerian = [np.array([ast['a'], ast['e'], ast['i'], ast['lan'], ast['omega'], true_anomaly]) for ast, true_anomaly in zip(asteroids, true_anomalies_asteroids)]
 asteroids_initial_states_cartesian = [element_conversion.keplerian_to_cartesian(keplerian_state, sun_gravitational_parameter) for keplerian_state in asteroids_initial_states_keplerian]
 
@@ -88,7 +95,13 @@ system_initial_state = np.hstack((spacecraft_initial_state_cartesian,
 
 # integrator settings
 time_step = 1e4 # s, dummy value for now, will need to be tuned
-block_indices=[(0, 0, 3, 1), (3, 0, 3, 1)]
+# Include ALL translational bodies (spacecraft + asteroids) in the step-size error estimate.
+# Previously only the spacecraft (col 0) was monitored, causing high-eccentricity asteroids
+# to pass perihelion in single 14-day steps at ~100 km/s, gaining phantom orbital energy and escaping.
+n_translational_bodies = len(bodies_to_propagate)
+# State is a (6*N, 1) column vector: rows 0-5 = spacecraft, rows 6-11 = asteroid 0, etc.
+# A single block covering all 6*N rows ensures every body controls the step size.
+block_indices = [(0, 0, 6 * n_translational_bodies, 1)]
 tolerance=1e-10 # both absolute and relative
 
 step_size_control_settings = propagation_setup.integrator.step_size_control_blockwise_scalar_tolerance(
@@ -232,4 +245,4 @@ ax.set_zlabel('Z (AU)')
 ax.set_title('Spacecraft Trajectory')
 ax.legend()
 ax.grid(True, alpha=0.3)
-plt.show()
+# plt.show()
