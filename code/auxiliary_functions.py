@@ -44,21 +44,20 @@ def parse_asteroids(filepath: str, n_asteroids: int = None):
 def build_bodies(asteroids: list[dict]):
     from tudatpy.dynamics import environment_setup
     
-    mu_sun = spice.get_body_gravitational_parameter('Sun')
-
     body_settings = environment_setup.get_default_body_settings(['Sun'])
 
     for ast in asteroids:
         name = f"ast_{ast['name']}"
         body_settings.add_empty_settings(name)
+        true_anomaly = element_conversion.mean_to_true_anomaly(ast['e'], ast['M0'])
         body_settings.get(name).ephemeris_settings = (
             environment_setup.ephemeris.keplerian(
                 initial_keplerian_state=np.array([
                     ast['a'], ast['e'], ast['i'],
-                    ast['lan'], ast['omega'], ast['M0'],
+                    ast['omega'], ast['lan'], true_anomaly,
                 ]),
                 initial_state_epoch=ast['epoch'],
-                central_body_gravitational_parameter=mu_sun,
+                central_body_gravitational_parameter=sun_gravitational_parameter,
                 frame_origin='Sun',
                 frame_orientation='ECLIPJ2000',
             )

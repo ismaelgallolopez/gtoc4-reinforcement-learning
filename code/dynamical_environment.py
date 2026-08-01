@@ -66,8 +66,20 @@ acceleration_settings_asteroids = dict(
 )
 
 # computing the initial state of the spacecraft
-true_anomaly_earth = element_conversion.mean_to_true_anomaly(eccentricity_earth, mean_anomaly_earth) # convertion needed for the tudat conversion function
-earth_initial_state_keplerian = np.array([a_earth, eccentricity_earth, inclination_earth, lan_earth, arg_periapsis_earth, true_anomaly_earth])
+delta_t_earth = start_epoch - mjd_to_et(epoch) # seconds from the reference epoch to the simulation start
+n_earth = np.sqrt(sun_gravitational_parameter / a_earth**3) # mean motion of the Earth (rad/s)
+mean_anomaly_earth_at_start_epoch = (np.deg2rad(mean_anomaly_earth) + n_earth * delta_t_earth) % (2 * np.pi)
+true_anomaly_earth = element_conversion.mean_to_true_anomaly(
+    eccentricity_earth, mean_anomaly_earth_at_start_epoch)
+
+earth_initial_state_keplerian = np.array([
+    a_earth,
+    eccentricity_earth,
+    np.deg2rad(inclination_earth),
+    np.deg2rad(arg_periapsis_earth),  
+    np.deg2rad(lan_earth),
+    true_anomaly_earth,
+])
 
 earth_initial_state_cartesian = element_conversion.keplerian_to_cartesian(earth_initial_state_keplerian, sun_gravitational_parameter)
 
@@ -84,7 +96,7 @@ for ast in asteroids:
     n = np.sqrt(sun_gravitational_parameter / ast['a']**3)  # mean motion (rad/s)
     M_at_start = (ast['M0'] + n * delta_t) % (2 * np.pi)
     true_anomalies_asteroids.append(element_conversion.mean_to_true_anomaly(ast['e'], M_at_start))
-asteroids_initial_states_keplerian = [np.array([ast['a'], ast['e'], ast['i'], ast['lan'], ast['omega'], true_anomaly]) for ast, true_anomaly in zip(asteroids, true_anomalies_asteroids)]
+asteroids_initial_states_keplerian = [np.array([ast['a'], ast['e'], ast['i'], ast['omega'], ast['lan'], true_anomaly]) for ast, true_anomaly in zip(asteroids, true_anomalies_asteroids)]
 asteroids_initial_states_cartesian = [element_conversion.keplerian_to_cartesian(keplerian_state, sun_gravitational_parameter) for keplerian_state in asteroids_initial_states_keplerian]
 
 # print(np.shape(asteroids_initial_states_cartesian)) # debugging
