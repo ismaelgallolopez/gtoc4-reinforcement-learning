@@ -9,6 +9,7 @@ spacecraft_wet_mass = spacecraft_dry_mass + spacecraft_propellant_mass # kg
 scape_velocity_max = 4.0e3 # m/s
 Isp_engine = 3000.0 # s
 thrust_max = 0.135 # N
+thrust_max = 0.01 # to debug at first
 launch_interval = [time_representation.DateTime(2015, 1, 1).to_epoch(), 
                    time_representation.DateTime(2025, 1, 1).to_epoch()]
 time_mission_max = 10.0 * constants.JULIAN_YEAR # s

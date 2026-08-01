@@ -1,5 +1,6 @@
 import os
-import numpy as np
+import time
+import jax.numpy as np
 import matplotlib.pyplot as plt
 
 from tudatpy import constants, util
@@ -11,6 +12,8 @@ from tudatpy.math import interpolators
 
 from problem_parameters import * # the problem parameters from the description
 from auxiliary_functions import * 
+
+time_start = time.time() # for timing the simulation
 
 ASTEROIDS_FILEPATH = "../data/gtoc4_problem_data.txt"
 n_asteroids = None # set to None to load all asteroids
@@ -186,7 +189,7 @@ propagator_settings = propagation_setup.propagator.multitype(
     variables_to_save_list
 )
 
-propagator_settings.print_settings.print_initial_and_final_conditions = True
+# propagator_settings.print_settings.print_initial_and_final_conditions = True
 
 # propagate orbit
 dynamics_simulator = simulator.create_dynamics_simulator(
@@ -248,3 +251,7 @@ ax.set_title('Spacecraft Trajectory')
 ax.legend()
 ax.grid(True, alpha=0.3)
 # plt.show()
+
+time_end = time.time() # for timing the simulation
+time_elapsed = time_end - time_start
+print(f"Simulation completed in {time_elapsed:.2f} seconds.")

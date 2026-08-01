@@ -1,5 +1,5 @@
 import re
-import numpy as np
+import jax.numpy as np
 from tudatpy.interface import spice
 from tudatpy.astro import element_conversion
 from tudatpy.dynamics import environment_setup
