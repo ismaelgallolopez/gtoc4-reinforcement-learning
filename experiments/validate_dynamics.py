@@ -48,15 +48,76 @@ def validate_propagation():
     print(f"  position error: {pos_err:.3f} m")
     print(f"  velocity error: {vel_err * 1e3:.3f} mm/s")
     print(f"  mass error:     {mass_err * 1e3:.3f} g")
-    # residual position error (~hundreds of m) doesn't shrink with finer RK4 steps -- it isn't
-    # truncation error. About half of it is explained by a mu mismatch: Tudat's SPICE-derived
-    # solar GM differs from the problem-statement constant (constants.sun_gravitational_parameter)
-    # by ~2e-10 relative; using Tudat's exact value roughly halves the error (760 m -> 358 m).
-    # The rest sits within the noise floor of comparing two independent integrators -- pinning
-    # Tudat's Sun as its own frame origin (ruling out SSB barycentric motion) made no difference.
-    assert pos_err < 2000.0, "position error exceeds 2 km"
-    assert vel_err < 1.0, "velocity error exceeds 1 m/s"
+    # this used to show ~760 m / 0.16 mm/s against Tudat's old default tolerance (1e-10).
+    # Traced it down: ~640 m of that was Tudat's own integration not being converged at 1e-10 for
+    # this eccentric dummy departure orbit (confirmed by bridging a tol=1e-13 run forward with this
+    # same RK4 propagator and comparing to the raw tol=1e-10 output -- they differed by ~640 m,
+    # essentially the whole gap). The remaining ~172 m is a real, small effect: the problem
+    # statement's solar GM (constants.sun_gravitational_parameter) differs from Tudat's SPICE value
+    # by ~2e-10 relative, which is enough to shift this near-resonant orbit's phase measurably over
+    # 300 days. verify_tudat.run_propagation now defaults to tolerance=1e-13. With that plus
+    # Tudat's exact mu, RK4 agrees with Tudat to 1.9 m / 0.0003 mm/s. Floating-point rounding was
+    # checked separately (check_precision, below) and ruled out at the millimetre level.
+    assert pos_err < 300.0, "position error exceeds 300 m"
+    assert vel_err < 0.1, "velocity error exceeds 0.1 m/s"
     assert mass_err < 1.0, "mass error exceeds 1 g"
+
+def validate_propagation_matched_mu():
+    """Same comparison as validate_propagation, but Tudat's Sun is forced to use our own mu
+    (constants.sun_gravitational_parameter) instead of its default SPICE value. This isolates
+    whether the RK4 *implementation* is correct, with the mu-source difference removed entirely."""
+    start_epoch = launch_interval[0]
+
+    earth_state = catalog.earth_initial_state(start_epoch, mu)
+    excess_velocity = np.array([4.0e3, 0.0, 0.0])
+    initial_state = np.concatenate([earth_state + np.hstack((np.zeros(3), excess_velocity)),
+                                     [spacecraft_wet_mass]])
+    thrust_force = THRUST_MAGNITUDE * THRUST_DIRECTION
+
+    results = verify_tudat.run_propagation(
+        n_asteroids=1, duration=DURATION, sun_gravitational_parameter_override=mu,
+        thrust_direction_function=lambda t: THRUST_DIRECTION.tolist(),
+        thrust_magnitude_function=lambda t: THRUST_MAGNITUDE,
+    )
+    epochs = results.state_history.keys()
+    matched_epoch = min(epochs, key=lambda e: abs((e - start_epoch) - DURATION))
+    duration_matched = matched_epoch - start_epoch
+    final_state_tudat = results.state_history[matched_epoch][:6]
+    final_mass_tudat = results.dependent_variable_history[matched_epoch][0]
+
+    n_substeps = round(duration_matched / 8640.0)
+    final_rk4 = dynamics.propagate(initial_state, thrust_force, duration_matched, n_substeps, mu, Isp_engine)
+
+    pos_err = np.linalg.norm(final_rk4[:3] - final_state_tudat[:3])
+    vel_err = np.linalg.norm(final_rk4[3:6] - final_state_tudat[3:6])
+    mass_err = abs(final_rk4[6] - final_mass_tudat)
+
+    print(f"\nRK4 vs Tudat (matched mu) after {duration_matched / 86400:.1f} days, constant thrust:")
+    print(f"  position error: {pos_err:.3f} m")
+    print(f"  velocity error: {vel_err * 1e3:.3f} mm/s")
+    print(f"  mass error:     {mass_err * 1e3:.3f} g")
+    # with the mu-source difference removed, this is a check on the RK4 implementation alone
+    assert pos_err < 10.0, "position error exceeds 10 m with mu matched -- suggests an RK4 bug"
+    assert vel_err < 0.01, "velocity error exceeds 1 cm/s with mu matched -- suggests an RK4 bug"
+
+def check_precision():
+    """Confirms the RK4 vs Tudat residual isn't floating-point rounding: reruns one propagation at
+    extended (80-bit) precision and checks the shift is negligible next to the residuals above."""
+    start_epoch = launch_interval[0]
+    earth_state = catalog.earth_initial_state(start_epoch, mu)
+    excess_velocity = np.array([4.0e3, 0.0, 0.0])
+    initial_state = np.concatenate([earth_state + np.hstack((np.zeros(3), excess_velocity)),
+                                     [spacecraft_wet_mass]])
+    thrust_force = THRUST_MAGNITUDE * THRUST_DIRECTION
+    n_substeps = round(DURATION / 8640.0)
+
+    final_f64 = dynamics.propagate(initial_state, thrust_force, DURATION, n_substeps, mu, Isp_engine)
+    final_ld = dynamics.propagate(initial_state.astype(np.longdouble), thrust_force.astype(np.longdouble),
+                                   np.longdouble(DURATION), n_substeps, np.longdouble(mu), np.longdouble(Isp_engine))
+
+    shift = np.linalg.norm(np.array(final_ld[:3], dtype=np.float64) - final_f64[:3])
+    print(f"\nposition shift from float64 -> extended precision: {shift * 1e3:.3f} mm")
+    assert shift < 1.0, "precision-driven shift is unexpectedly large -- rounding may matter after all"
 
 def check_speed():
     state = np.concatenate([catalog.earth_initial_state(launch_interval[0], mu), [spacecraft_wet_mass]])
@@ -111,5 +172,7 @@ def check_execution_time():
 
 if __name__ == "__main__":
     validate_propagation()
+    validate_propagation_matched_mu()
+    check_precision()
     check_speed()
     check_execution_time()
