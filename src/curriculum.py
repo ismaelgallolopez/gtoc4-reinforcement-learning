@@ -62,7 +62,16 @@ STAGES = {
     # coasting, well short of even the loosened tolerance. Stage 2's delta-v margin was only 1.2x
     # (see check_curriculum.py) -- too tight for an imperfect learned policy to close reliably.
     # Extended the window 400 -> 600 days, which raises the delta-v budget directly (budget =
-    # a_max * time_limit) rather than papering over it with a looser tolerance again.
+    # a_max * time_limit) rather than papering over it with a looser tolerance again -- didn't fix
+    # it either (delta_r ~190-220M km, worse than the 400-day coast baseline). Neither did warm-
+    # starting from the stage-1 policy with exploration noise manually reset (std 0.235 -> 1.0),
+    # ruling out low-exploration collapse specifically. Best result after four attempts: 0/5
+    # success, final |delta_r| ~185M km. Left as an open, documented failure rather than force-fit
+    # -- the combined Da+Di maneuver may need something other than greedy potential-based shaping,
+    # which can locally mislead a policy into directly closing distance instead of executing a
+    # more efficient indirect transfer. Stage 3 and the final randomised-target config below warm-
+    # start from stage 1, not this stage-2 checkpoint, per the plan's own priority order (WP5's
+    # multi-seed final-config runs are never cut; stage 2 is a stepping stone).
     2: dict(
         target=_earth_like_target(delta_a=0.1 * AU, delta_i=np.deg2rad(2.0), delta_M=0.0),
         position_tolerance=1e5 * 1e3,  # 1e5 km
