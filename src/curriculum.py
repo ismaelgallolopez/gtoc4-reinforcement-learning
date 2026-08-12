@@ -93,3 +93,20 @@ def make_env(stage, catalog_path=None, rng=None):
 
     return Gtoc4ControlEnv(initial_state(), target, START_EPOCH, time_limit,
                             position_tolerance=position_tolerance, velocity_tolerance=velocity_tolerance)
+
+def make_randomized_env(catalog_path, pool_size=50, time_limit_range=(300, 600), rng=None):
+    """WP5's generalisation step: the target is resampled from the asteroid pool on every reset,
+    instead of being fixed for the env's lifetime like make_env(stage=3). Forces the agent to
+    learn a guidance law rather than memorise one transfer."""
+    rng = rng or np.random.default_rng()
+    asteroids = catalog.parse_asteroids(catalog_path, n_asteroids=pool_size)
+
+    def sampler():
+        target = asteroids[rng.integers(len(asteroids))]
+        time_limit = rng.uniform(*time_limit_range) * 86400.0
+        return target, time_limit
+
+    target0, time_limit0 = sampler()
+    return Gtoc4ControlEnv(initial_state(), target0, START_EPOCH, time_limit0,
+                            position_tolerance=accuracy_position, velocity_tolerance=accuracy_velocity,
+                            target_sampler=sampler)
