@@ -44,12 +44,16 @@ class Gtoc4ControlEnv(gym.Env):
                  control_interval=86400.0, integration_substeps=10,
                  position_tolerance=accuracy_position, velocity_tolerance=accuracy_velocity,
                  shaping_weight_position=1.0, shaping_weight_velocity=1.0,
-                 propellant_penalty=0.0, rendezvous_bonus=10.0):
+                 propellant_penalty=0.0, rendezvous_bonus=10.0, target_sampler=None):
+        """target_sampler, if given, is called with no arguments on every reset() and must return
+        (target, time_limit); it overrides the fixed target/time_limit passed above, so a single
+        env instance can present a different target each episode (WP5's generalisation step)."""
         super().__init__()
         self.initial_state = np.asarray(initial_state, dtype=np.float64)
         self.target = target
         self.start_epoch = start_epoch
         self.time_limit = time_limit
+        self.target_sampler = target_sampler
         self.control_interval = control_interval
         self.integration_substeps = integration_substeps
         self.position_tolerance = position_tolerance
@@ -64,6 +68,7 @@ class Gtoc4ControlEnv(gym.Env):
 
         self.state = None
         self.elapsed_time = 0.0
+        self.total_impulse = 0.0
 
     def _target_state(self, t):
         return catalog.target_states([self.target], t, mu)[0]
@@ -86,8 +91,11 @@ class Gtoc4ControlEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        if self.target_sampler is not None:
+            self.target, self.time_limit = self.target_sampler()
         self.state = self.initial_state.copy()
         self.elapsed_time = 0.0
+        self.total_impulse = 0.0
         delta_r, delta_v = self._deltas()
         self._delta_r, self._delta_v = delta_r, delta_v  # cached for the next step()'s "before"
         info = {'delta_r': delta_r, 'delta_v': delta_v, 'mass': self.state[6]}
@@ -106,6 +114,7 @@ class Gtoc4ControlEnv(gym.Env):
 
         rotation = rtn_frame(self.state[:3], self.state[3:6])
         thrust_force = throttle * thrust_max * (rotation @ rtn_unit)
+        self.total_impulse += np.linalg.norm(thrust_force) * self.control_interval
 
         # "before" deltas are exactly what the previous step (or reset) computed as "after"
         delta_r_before, delta_v_before = self._delta_r, self._delta_v
@@ -139,5 +148,9 @@ class Gtoc4ControlEnv(gym.Env):
         info = {
             'delta_r': delta_r_after, 'delta_v': delta_v_after, 'mass': self.state[6],
             'rtn_action': rtn_unit, 'throttle': throttle, 'success': rendezvous,
+            'total_impulse': self.total_impulse,
+            # scalar duplicates, for SB3 Monitor(info_keywords=...) which needs scalars per episode
+            'delta_r_norm': float(np.linalg.norm(delta_r_after)),
+            'delta_v_norm': float(np.linalg.norm(delta_v_after)),
         }
         return self._observation(delta_r_after, delta_v_after), float(reward), terminated, truncated, info
