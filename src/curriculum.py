@@ -54,16 +54,20 @@ STAGES = {
         velocity_tolerance=500.0,      # m/s
         time_limit=400 * 86400.0,
     ),
-    # tolerance loosened 10x here too (1e4 km/10 m/s -> 1e5 km/100 m/s), for the same reason as
-    # stage 1: a warm-started run against the original tolerance saw zero successes across 750k
-    # steps and returns actually drifted worse (-1.89 -> -1.94), never once triggering the
-    # terminal bonus. Stage 2's delta-v margin (1.2x, see check_curriculum.py) is much thinner
-    # than stage 1's (3.7x), so it needs the same treatment.
+    # tolerance loosened 10x (1e4 km/10 m/s -> 1e5 km/100 m/s) for the same reason as stage 1: a
+    # warm-started run against the original tolerance saw zero successes across 750k steps, return
+    # drifting worse (-1.89 -> -1.94), never once triggering the terminal bonus. That alone wasn't
+    # enough though: retrained from scratch (no warm start, to rule out a stale low-exploration
+    # policy) for 1M steps and delta_r plateaued around 110-145M km the whole time, similar to just
+    # coasting, well short of even the loosened tolerance. Stage 2's delta-v margin was only 1.2x
+    # (see check_curriculum.py) -- too tight for an imperfect learned policy to close reliably.
+    # Extended the window 400 -> 600 days, which raises the delta-v budget directly (budget =
+    # a_max * time_limit) rather than papering over it with a looser tolerance again.
     2: dict(
         target=_earth_like_target(delta_a=0.1 * AU, delta_i=np.deg2rad(2.0), delta_M=0.0),
         position_tolerance=1e5 * 1e3,  # 1e5 km
         velocity_tolerance=100.0,      # m/s
-        time_limit=400 * 86400.0,
+        time_limit=600 * 86400.0,
     ),
 }
 
