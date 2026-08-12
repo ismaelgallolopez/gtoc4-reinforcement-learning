@@ -7,7 +7,7 @@ import catalog
 from gtoc4_env import Gtoc4ControlEnv
 from constants import (a_earth, eccentricity_earth, inclination_earth, lan_earth,
                         arg_periapsis_earth, mean_anomaly_earth, epoch,
-                        sun_gravitational_parameter as mu, spacecraft_wet_mass,
+                        sun_gravitational_parameter as mu, spacecraft_wet_mass, thrust_max,
                         accuracy_position, accuracy_velocity, launch_interval)
 
 AU = tudat_constants.ASTRONOMICAL_UNIT
@@ -89,8 +89,47 @@ def initial_state():
     earth_state = catalog.earth_initial_state(START_EPOCH, mu)
     return np.concatenate([earth_state, [spacecraft_wet_mass]])
 
+# stage 3's window departs sharply from the plan's stated "300-600 days": scanning the full 1436-
+# asteroid catalog, only 2 asteroids are reachable at all within 600 days (min delta-v needed
+# across the *entire* catalog is 3498 m/s, barely above the 600-day budget of 4666 m/s), and 0
+# clear even a 1.5x margin. This isn't a training issue -- it's why GTOC4's own mission budget
+# (constants.time_mission_max) is 10 years, not ~1.5. At a 5-7 year window, 17-37 asteroids clear
+# a 1.5x margin, a usable pool. Longer episodes are expensive at a 1-day control interval (a 7-year
+# episode is ~2557 steps), so stage 3 and the randomised pool use a 5-day interval instead --
+# control interval is one of WP6's own sensitivity parameters, so this is a supported knob, not an
+# ad-hoc hack.
+ASTEROID_TIME_LIMIT_RANGE = (5 * 365.25, 7 * 365.25)  # days
+ASTEROID_CONTROL_INTERVAL = 5 * 86400.0  # s
+
+def _delta_v_needed(target, time_limit):
+    """Closed-form delta-v estimate for reaching `target` from Earth within time_limit: energy
+    (semi-major-axis) term + phasing term. Same formula check_curriculum.py uses to verify the
+    synthetic stages -- reused here to filter the real asteroid pool, since the raw GTOC4 catalog
+    isn't sorted by difficulty (a first uniform draw needed ~50 km/s against a ~3 km/s budget)."""
+    v_circ = np.sqrt(mu / a_earth)
+    delta_a = target['a'] - a_earth
+    dv_energy = abs(delta_a) * np.sqrt(mu) / (2 * a_earth**1.5)
+
+    earth_at_start = catalog.earth_initial_state(START_EPOCH, mu)
+    target_at_start = catalog.target_states([target], START_EPOCH, mu)[0]
+    cos_angle = np.dot(earth_at_start[:3], target_at_start[:3]) / (
+        np.linalg.norm(earth_at_start[:3]) * np.linalg.norm(target_at_start[:3]))
+    delta_theta = np.arccos(np.clip(cos_angle, -1.0, 1.0))
+    return dv_energy + v_circ * delta_theta
+
+def build_reachable_pool(catalog_path, pool_size=50, scan_size=2000, margin_min=1.5, time_limit=600 * 86400.0):
+    """Filters the catalog down to `pool_size` asteroids reachable within margin_min x the
+    delta-v budget at `time_limit` (the most generous curriculum window)."""
+    a_max = thrust_max / spacecraft_wet_mass
+    dv_budget = a_max * time_limit
+
+    candidates = catalog.parse_asteroids(catalog_path, n_asteroids=scan_size)
+    reachable = [ast for ast in candidates if _delta_v_needed(ast, time_limit) < dv_budget / margin_min]
+    return reachable[:pool_size]
+
 def sample_asteroid_target(catalog_path, rng, pool_size=50):
-    asteroids = catalog.parse_asteroids(catalog_path, n_asteroids=pool_size)
+    asteroids = build_reachable_pool(catalog_path, pool_size=pool_size,
+                                      time_limit=max(ASTEROID_TIME_LIMIT_RANGE) * 86400.0)
     return asteroids[rng.integers(len(asteroids))]
 
 def make_env(stage, catalog_path=None, rng=None):
@@ -100,24 +139,26 @@ def make_env(stage, catalog_path=None, rng=None):
         cfg = STAGES[stage]
         target, position_tolerance, velocity_tolerance, time_limit = (
             cfg['target'], cfg['position_tolerance'], cfg['velocity_tolerance'], cfg['time_limit'])
+        control_interval = 86400.0
     elif stage == 3:
         rng = rng or np.random.default_rng()
         target = sample_asteroid_target(catalog_path, rng)
         position_tolerance = accuracy_position
         velocity_tolerance = accuracy_velocity
-        time_limit = rng.uniform(300, 600) * 86400.0
+        time_limit = rng.uniform(*ASTEROID_TIME_LIMIT_RANGE) * 86400.0
+        control_interval = ASTEROID_CONTROL_INTERVAL
     else:
         raise ValueError(f"unknown curriculum stage: {stage}")
 
-    return Gtoc4ControlEnv(initial_state(), target, START_EPOCH, time_limit,
+    return Gtoc4ControlEnv(initial_state(), target, START_EPOCH, time_limit, control_interval=control_interval,
                             position_tolerance=position_tolerance, velocity_tolerance=velocity_tolerance)
 
-def make_randomized_env(catalog_path, pool_size=50, time_limit_range=(300, 600), rng=None):
+def make_randomized_env(catalog_path, pool_size=50, time_limit_range=ASTEROID_TIME_LIMIT_RANGE, rng=None):
     """WP5's generalisation step: the target is resampled from the asteroid pool on every reset,
     instead of being fixed for the env's lifetime like make_env(stage=3). Forces the agent to
     learn a guidance law rather than memorise one transfer."""
     rng = rng or np.random.default_rng()
-    asteroids = catalog.parse_asteroids(catalog_path, n_asteroids=pool_size)
+    asteroids = build_reachable_pool(catalog_path, pool_size=pool_size, time_limit=max(time_limit_range) * 86400.0)
 
     def sampler():
         target = asteroids[rng.integers(len(asteroids))]
@@ -126,5 +167,6 @@ def make_randomized_env(catalog_path, pool_size=50, time_limit_range=(300, 600),
 
     target0, time_limit0 = sampler()
     return Gtoc4ControlEnv(initial_state(), target0, START_EPOCH, time_limit0,
+                            control_interval=ASTEROID_CONTROL_INTERVAL,
                             position_tolerance=accuracy_position, velocity_tolerance=accuracy_velocity,
                             target_sampler=sampler)
