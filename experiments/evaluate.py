@@ -16,9 +16,14 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), '..', 'results')
 CATALOG_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'gtoc4_problem_data.txt')
 
 def evaluate(run_name, stage=1, randomize=False, n_episodes=20, seed=1234):
+    """seed is used for the randomised-target sampler (should differ from training seeds, to test
+    generalisation to unseen targets) and, for stage 3, to pick the fixed asteroid -- pass the
+    same seed the run was trained with there, since stage 3 fixes one target for the whole run."""
     run_dir = os.path.join(RESULTS_DIR, run_name)
     if randomize:
         env_fn = lambda: curriculum.make_randomized_env(CATALOG_PATH, rng=np.random.default_rng(seed))
+    elif stage == 3:
+        env_fn = lambda: curriculum.make_env(stage, catalog_path=CATALOG_PATH, rng=np.random.default_rng(seed))
     else:
         env_fn = lambda: curriculum.make_env(stage)
     env = DummyVecEnv([lambda: Monitor(env_fn())])

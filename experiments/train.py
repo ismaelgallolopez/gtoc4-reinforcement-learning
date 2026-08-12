@@ -26,6 +26,10 @@ def train(stage=1, randomize=False, seed=0, total_timesteps=1_000_000, run_name=
 
     if randomize:
         env_fn = lambda: curriculum.make_randomized_env(CATALOG_PATH, rng=np.random.default_rng(seed))
+    elif stage == 3:
+        # fixed single asteroid for the whole run: same seed -> same sampled target every reset,
+        # since make_env(stage=3) draws once from a fresh rng and Gtoc4ControlEnv keeps it fixed
+        env_fn = lambda: curriculum.make_env(stage, catalog_path=CATALOG_PATH, rng=np.random.default_rng(seed))
     else:
         env_fn = lambda: curriculum.make_env(stage)
 
