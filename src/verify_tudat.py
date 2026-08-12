@@ -18,8 +18,14 @@ spice.load_standard_kernels()
 ASTEROIDS_FILEPATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'gtoc4_problem_data.txt')
 RESULTS_DIRECTORY = os.path.join(os.path.dirname(__file__), '..', 'results')
 
-def build_bodies(asteroids: list[dict]):
+def build_bodies(asteroids: list[dict], sun_gravitational_parameter_override=None):
+    """sun_gravitational_parameter_override lets a caller replace Tudat's default SPICE-derived
+    solar GM with a custom value (e.g. constants.sun_gravitational_parameter), to compare RK4
+    against Tudat with the exact same gravity model instead of two independently-sourced GMs."""
     body_settings = environment_setup.get_default_body_settings(['Sun'])
+    if sun_gravitational_parameter_override is not None:
+        body_settings.get('Sun').gravity_field_settings = environment_setup.gravity_field.central(
+            sun_gravitational_parameter_override)
 
     for ast in asteroids:
         name = f"ast_{ast['name']}"
@@ -50,9 +56,10 @@ def default_thrust_magnitude(time):
     return thrust_max
 
 def run_propagation(n_asteroids=None, thrust_direction_function=default_thrust_direction,
-                     thrust_magnitude_function=default_thrust_magnitude, duration=None, plot=False, save=False):
+                     thrust_magnitude_function=default_thrust_magnitude, duration=None,
+                     tolerance=1e-13, sun_gravitational_parameter_override=None, plot=False, save=False):
     asteroids = parse_asteroids(ASTEROIDS_FILEPATH, n_asteroids)
-    bodies = build_bodies(asteroids)
+    bodies = build_bodies(asteroids, sun_gravitational_parameter_override)
     names = [f"ast_{a['name']}" for a in asteroids]
 
     bodies_to_propagate = ['spacecraft'] + names
@@ -114,10 +121,13 @@ def run_propagation(n_asteroids=None, thrust_direction_function=default_thrust_d
 
     system_initial_state = np.hstack((spacecraft_initial_state, *asteroids_initial_states))
 
-    # integrator: RKF78, variable step, blockwise tolerance on position and velocity of every body
+    # integrator: RKF78, variable step, blockwise tolerance on position and velocity of every body.
+    # tolerance defaults to 1e-13, not 1e-10: for the eccentric dummy departure orbit used here,
+    # 1e-10 doesn't fully converge (its result still moves ~600 m under further tightening, checked
+    # by bridging a 1e-13 run forward with the validated RK4 propagator) -- this module is meant as
+    # ground truth, so it should actually be converged.
     n_bodies = len(bodies_to_propagate)
     block_indices = [(6 * i + offset, 0, 3, 1) for i in range(n_bodies) for offset in (0, 3)]
-    tolerance = 1e-10
     integrator_settings = propagation_setup.integrator.runge_kutta_variable_step(
         initial_time_step=1e4,
         coefficient_set=propagation_setup.integrator.CoefficientSets.rkf_78,
