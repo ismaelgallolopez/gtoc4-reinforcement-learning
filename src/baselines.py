@@ -8,8 +8,11 @@ def run_baseline(env, action):
     env.reset()
     terminated = truncated = False
     info = {}
+    episode_return = 0.0
     while not (terminated or truncated):
-        _, _, terminated, truncated, info = env.step(action)
+        _, reward, terminated, truncated, info = env.step(action)
+        episode_return += reward
+    info['episode_return'] = episode_return
     return info
 
 def coast(env):

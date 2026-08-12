@@ -53,14 +53,16 @@ def check_delta_v_budget():
 
 def baseline_table():
     rng = np.random.default_rng(0)
-    print(f"\n{'stage':<7}{'policy':<12}{'|delta_r| (km)':<16}{'|delta_v| (m/s)':<16}{'mass (kg)':<11}success")
+    print(f"\n{'stage':<7}{'policy':<12}{'|delta_r| (km)':<16}{'|delta_v| (m/s)':<16}{'mass (kg)':<11}"
+          f"{'return':<9}success")
     for stage in (1, 2, 3):
         env = curriculum.make_env(stage, catalog_path=CATALOG_PATH, rng=rng)
         for name, policy in [('coast', baselines.coast), ('tangential', baselines.tangential_thrust)]:
             info = policy(env)
             dr_km = np.linalg.norm(info['delta_r']) / 1e3
             dv = np.linalg.norm(info['delta_v'])
-            print(f"{stage:<7}{name:<12}{dr_km:<16.1f}{dv:<16.2f}{info['mass']:<11.1f}{info['success']}")
+            print(f"{stage:<7}{name:<12}{dr_km:<16.1f}{dv:<16.2f}{info['mass']:<11.1f}"
+                  f"{info['episode_return']:<9.3f}{info['success']}")
 
 if __name__ == "__main__":
     check_delta_v_budget()
