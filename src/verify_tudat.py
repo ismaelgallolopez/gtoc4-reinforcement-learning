@@ -50,7 +50,7 @@ def default_thrust_magnitude(time):
     return thrust_max
 
 def run_propagation(n_asteroids=None, thrust_direction_function=default_thrust_direction,
-                     thrust_magnitude_function=default_thrust_magnitude, plot=False, save=False):
+                     thrust_magnitude_function=default_thrust_magnitude, duration=None, plot=False, save=False):
     asteroids = parse_asteroids(ASTEROIDS_FILEPATH, n_asteroids)
     bodies = build_bodies(asteroids)
     names = [f"ast_{a['name']}" for a in asteroids]
@@ -59,7 +59,7 @@ def run_propagation(n_asteroids=None, thrust_direction_function=default_thrust_d
     central_bodies = ['Sun'] * len(bodies_to_propagate)
 
     start_epoch = launch_interval[0]
-    end_epoch = start_epoch + time_mission_max
+    end_epoch = start_epoch + (duration if duration is not None else time_mission_max)
 
     # thrust and rotation models
     thrust_magnitude_settings = propagation_setup.thrust.custom_thrust_magnitude_fixed_isp(
