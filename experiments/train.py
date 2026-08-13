@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import numpy as np
 import torch
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
@@ -18,6 +19,21 @@ import curriculum
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), '..', 'results')
 CATALOG_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'gtoc4_problem_data.txt')
 INFO_KEYWORDS = ('success', 'delta_r_norm', 'delta_v_norm', 'mass', 'total_impulse')
+
+class CheckpointCallback(BaseCallback):
+    """Overwrites model + VecNormalize stats in run_dir every `freq` steps, so a run killed by
+    an interruption (machine sleep/reboot, not a training bug -- this happened once already)
+    only loses up to `freq` steps instead of the whole run."""
+    def __init__(self, run_dir, freq=50_000):
+        super().__init__()
+        self.run_dir = run_dir
+        self.freq = freq
+
+    def _on_step(self):
+        if self.n_calls % self.freq == 0:
+            self.model.save(os.path.join(self.run_dir, 'ppo_model'))
+            self.training_env.save(os.path.join(self.run_dir, 'vecnormalize.pkl'))
+        return True
 
 def train(stage=1, randomize=False, seed=0, total_timesteps=1_000_000, run_name=None, warm_start=None):
     run_name = run_name or f"stage{stage}_seed{seed}"
@@ -57,7 +73,7 @@ def train(stage=1, randomize=False, seed=0, total_timesteps=1_000_000, run_name=
             verbose=1,
         )
 
-    model.learn(total_timesteps=total_timesteps)
+    model.learn(total_timesteps=total_timesteps, callback=CheckpointCallback(run_dir))
 
     model.save(os.path.join(run_dir, 'ppo_model'))
     env.save(os.path.join(run_dir, 'vecnormalize.pkl'))
