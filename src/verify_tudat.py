@@ -171,6 +171,58 @@ def run_propagation(n_asteroids=None, thrust_direction_function=default_thrust_d
 
     return results
 
+def run_policy_verification(initial_state, start_epoch, duration, thrust_direction_function,
+                             thrust_magnitude_function, tolerance=1e-13):
+    """Replays a piecewise thrust profile (e.g. from an RL rollout) through Tudat's RKF78
+    integrator -- WP8's check of whether a policy trained against the hand-written RK4
+    propagator still works under an independent, higher-fidelity integrator. Only the
+    spacecraft is propagated: the target's ephemeris is the same analytic two-body Kepler
+    formula already cross-checked against Tudat in WP1 (validate_dynamics.py), so it doesn't
+    need re-verifying here."""
+    bodies = build_bodies([])
+    end_epoch = start_epoch + duration
+
+    thrust_magnitude_settings = propagation_setup.thrust.custom_thrust_magnitude_fixed_isp(
+        thrust_magnitude_function=thrust_magnitude_function, specific_impulse=Isp_engine)
+    environment_setup.add_engine_model('spacecraft', 'LowThrustEngine', thrust_magnitude_settings, bodies)
+    environment_setup.add_rotation_model(
+        bodies, 'spacecraft',
+        environment_setup.rotation_model.custom_inertial_direction_based(
+            thrust_direction_function, 'ECLIPJ2000', 'VehicleFixed'))
+
+    acceleration_settings = {'spacecraft': dict(
+        Sun=[propagation_setup.acceleration.point_mass_gravity()],
+        spacecraft=[propagation_setup.acceleration.thrust_from_all_engines()])}
+    acceleration_models = propagation_setup.create_acceleration_models(
+        bodies, acceleration_settings, ['spacecraft'], ['Sun'])
+
+    block_indices = [(0, 0, 3, 1), (3, 0, 3, 1)]
+    integrator_settings = propagation_setup.integrator.runge_kutta_variable_step(
+        initial_time_step=1e4,
+        coefficient_set=propagation_setup.integrator.CoefficientSets.rkf_78,
+        step_size_control_settings=propagation_setup.integrator.step_size_control_blockwise_scalar_tolerance(
+            block_indices=block_indices, relative_error_tolerance=tolerance, absolute_error_tolerance=tolerance),
+        step_size_validation_settings=propagation_setup.integrator.step_size_validation(
+            minimum_step=1.0, maximum_step=np.inf))
+
+    termination_settings = propagation_setup.propagator.time_termination(end_epoch)
+    translational_settings = propagation_setup.propagator.translational(
+        ['Sun'], acceleration_models, ['spacecraft'], np.asarray(initial_state[:6], dtype=np.float64),
+        start_epoch, integrator_settings, termination_settings)
+
+    mass_rate_models = propagation_setup.create_mass_rate_models(
+        bodies, dict(spacecraft=[propagation_setup.mass_rate.from_thrust()]), acceleration_models)
+    mass_settings = propagation_setup.propagator.mass(
+        ['spacecraft'], mass_rate_models, [float(initial_state[6])],
+        start_epoch, integrator_settings, termination_settings)
+
+    propagator_settings = propagation_setup.propagator.multitype(
+        [translational_settings, mass_settings], integrator_settings, start_epoch, termination_settings,
+        [propagation_setup.dependent_variable.body_mass('spacecraft')])
+
+    dynamics_simulator = simulator.create_dynamics_simulator(bodies, propagator_settings)
+    return dynamics_simulator.propagation_results
+
 def _plot_trajectory(results):
     position = util.result2array(results.state_history)[:, 1:4] / constants.ASTRONOMICAL_UNIT
     fig = plt.figure(figsize=(10, 8))
