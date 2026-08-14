@@ -1,5 +1,15 @@
 # WP6: aggregates the sensitivity sweep (experiments/sensitivity.py) into one plot per
 # parameter -- success rate and mean return vs value, mean +- std over 3 seeds.
+#
+# caveat found after running this: the 500k-step budget (half of WP4/WP5's 1M) turned out to be
+# insufficient for the baseline itself to converge -- stage 1 at 1M steps gets 20/20, but the
+# same config re-trained here for 500k gets 0/20 (see experiments/train.py's stage1_seed0 for
+# comparison: its return is still climbing at the 500k mark, not yet at its ~1M asymptote). So
+# most of what this sweep actually measures is which parameter changes make the task easy enough
+# to show *any* success within a fixed, sub-convergence budget (looser tolerances, coarser
+# control interval) vs which don't (propellant penalty, rendezvous bonus) -- not sensitivity of
+# converged performance. Reported as-is in the write-up, with this caveat stated explicitly,
+# rather than re-run at full budget (33 runs x 1M steps was judged not worth the wait here).
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -28,8 +38,13 @@ def plot_all():
         values = sorted([baseline_value[param]] + extra_values)
         rate_means, rate_stds, ret_means, ret_stds = [], [], [], []
         for v in values:
-            key = 'baseline' if v == baseline_value[param] else param
-            m_rate, s_rate, m_ret, s_ret = collect(key, v)
+            # the baseline point is trained once under run name "baseline_0_seed*" (see
+            # sensitivity.py) and reused for every parameter's middle value -- value=0.0 there
+            # is a naming placeholder only, since make_env ignores `value` when param=='baseline'
+            if v == baseline_value[param]:
+                m_rate, s_rate, m_ret, s_ret = collect('baseline', 0.0)
+            else:
+                m_rate, s_rate, m_ret, s_ret = collect(param, v)
             rate_means.append(m_rate); rate_stds.append(s_rate)
             ret_means.append(m_ret); ret_stds.append(s_ret)
             summary.append((param, v, m_rate, s_rate, m_ret, s_ret))
