@@ -1,0 +1,120 @@
+\chapter{Methodology}
+\label{chapter:methodology}
+
+\section{Dynamics model and its validation}
+\label{sec:dynamics}
+
+The spacecraft state $(\vec{r}, \vec{v}, m)$ evolves under Sun point-mass gravity and a
+controllable thrust force $\vec{F}$, with mass loss set by the rocket equation:
+\begin{align}
+  \dot{\vec r} &= \vec v, &
+  \dot{\vec v} &= -\frac{\mu_\odot}{\lVert\vec r\rVert^3}\vec r + \frac{\vec F}{m}, &
+  \dot m &= -\frac{\lVert\vec F\rVert}{I_{sp}\,g_0}.
+\end{align}
+This is integrated with a hand-written fixed-step RK4 scheme (10 substeps per control interval),
+using the problem statement's own value of $\mu_\odot$ rather than Tudat's SPICE-derived value, so
+that the codebase matches the GTOC4 problem definition it is meant to solve.
+
+To validate this against Tudat's adaptive RKF78 integrator, two checks were run
+(\texttt{experiments/validate\_dynamics.py}): one comparing RK4 (problem-statement $\mu_\odot$)
+against Tudat (SPICE $\mu_\odot$) over a 300-day coast, and one with both propagators forced to
+use the exact same $\mu_\odot$ to isolate the RK4 implementation itself from the choice of gravity
+constant. The first comparison showed a residual of \SI{172}{m} in position and \SI{0.043}{mm/s}
+in velocity after 300 days; the matched-constant comparison reduced this to \SI{1.9}{m} and
+\SI{0.3}{\micro\meter\per\second}. Two candidate explanations for the residual were tested and ruled out or
+confirmed empirically rather than assumed:
+\begin{itemize}
+  \item \textbf{Hypothesis: floating-point/language rounding.} Re-running RK4 at extended
+        (80-bit long double) precision shifted the trajectory by only \SI{1.1}{mm} -- two orders
+        of magnitude below the observed residual, ruling this out.
+  \item \textbf{Confirmed cause: integrator convergence.} Tudat's default relative/absolute
+        tolerance of $10^{-10}$ was not fully converged for the eccentric test orbit used;
+        bridging a tolerance-$10^{-13}$ Tudat run forward with the (already cross-validated) RK4
+        propagator and comparing to the raw tolerance-$10^{-10}$ Tudat output showed a
+        $\sim$\SI{640}{m} gap by itself. All downstream Tudat runs in this project therefore use
+        tolerance $10^{-13}$.
+\end{itemize}
+An execution-time comparison (same module) found RK4 to be roughly $8\times$ faster than
+Tudat for a representative multi-asteroid propagation -- useful, but far below a
+naively-assumed ``$1000\times$'' speedup, since most of Tudat's per-call cost for this problem
+size is body/ephemeris setup rather than the integration itself.
+
+\section{Environment}
+\label{sec:env}
+
+The task is implemented as a Gymnasium environment (\texttt{src/gtoc4\_env.py}). At each control
+step (default: one day) the agent chooses a thrust direction and throttle; the environment
+integrates the dynamics forward one control interval and returns a new observation and reward.
+
+\paragraph{Observation (14-D, normalised).} Absolute spacecraft position/velocity
+($\vec r/\mathrm{AU}$, $\vec v/v_{ref}$) and state \emph{relative to the target}
+($\Delta\vec r/\mathrm{AU}$, $\Delta\vec v/v_{ref}$, where $v_{ref}=\sqrt{\mu_\odot/\mathrm{AU}}$),
+plus mass fraction and fraction of time remaining. Both absolute and relative state are included
+because gravity depends on absolute position while the rendezvous objective depends on the
+relative state.
+
+\paragraph{Action (4-D, $[-1,1]^4$).} A thrust direction in the local radial-transverse-normal
+(RTN) frame plus a throttle. RTN separates energy change (transverse), orbit-shape change
+(radial) and plane change (normal), which makes the controller analysis in
+Section~\ref{sec:wp7} interpretable.
+
+\paragraph{Reward.} Potential-based shaping \parencite{ng1999policy},
+$F = \Phi(s') - \Phi(s)$ with $\Phi(s) = -\left(\lVert\Delta\vec r\rVert/\mathrm{AU} +
+\lVert\Delta\vec v\rVert/v_{ref}\right)$ and $\gamma=1$ in the shaping term, so that over a full
+episode the shaping reward telescopes to net progress made, independent of the path taken. A
+terminal bonus scaled by final mass fraction is added on a successful rendezvous.
+
+\paragraph{Termination.} An episode ends on rendezvous (both position and velocity within
+tolerance), propellant exhaustion, or divergence ($\lVert\Delta\vec r\rVert > 5\,\mathrm{AU}$).
+Running out of time is a \emph{truncation}, not a termination, so PPO's advantage estimator
+bootstraps correctly across the time limit rather than treating it as a dead end.
+
+\section{Curriculum}
+\label{sec:curriculum}
+
+Three stages of increasing difficulty were used (\texttt{src/curriculum.py}):
+
+\begin{description}
+  \item[Stage 1] A synthetic near-Earth target: $\Delta a = 0.02\,\mathrm{AU}$,
+    $\Delta i = 0\deg$, $\Delta M = 1\deg$ phase offset, 400-day window. Position/velocity
+    tolerance was loosened $10\times$ from an initial \SI{1e5}{km}/\SI{50}{m/s} to
+    \SI{1e6}{km}/\SI{500}{m/s} after a diagnostic (Section~\ref{sec:results-stage1}) showed the
+    policy reliably closing to within $\sim$\SI{650000}{km}/\SI{200}{m/s} but overshooting.
+  \item[Stage 2] A larger synthetic offset: $\Delta a = 0.1\,\mathrm{AU}$, $\Delta i = 2\deg$,
+    600-day window, tolerance \SI{1e5}{km}/\SI{100}{m/s}. Never solved despite four different
+    fixes (Section~\ref{sec:results-stage2}).
+  \item[Stage 3 / randomised] Real GTOC4 asteroids, sampled from a delta-v-feasibility-filtered
+    pool (Section~\ref{sec:results-final}), with a 5-day control interval and a randomised
+    5--7-year time window.
+\end{description}
+
+Both synthetic targets are anchored at the mission start epoch (not propagated forward from the
+catalog's far-past reference epoch), to avoid a small $\Delta a$ compounding into tens of degrees
+of unintended phase drift by the time the episode begins. The spacecraft starts exactly on
+Earth's own heliocentric orbit (no departure kick), so that stage 1's target is genuinely close
+to the spacecraft's starting state.
+
+\subsection{Real-asteroid reachability}
+\label{sec:reachability}
+
+The original plan called for a 300--600-day window for the real-asteroid stages. Scanning the
+full 1436-asteroid catalog for the closed-form impulsive delta-v needed to reach each asteroid
+(an energy term from the semi-major-axis difference, plus a phasing term $v\,\Delta\theta$ from
+the initial velocity-direction mismatch) showed that only 2 asteroids are reachable at all within
+600 days, and none with a comfortable margin, against a 600-day thrust budget of
+$a_{max}\cdot\Delta t \approx$ \SI{4666}{m/s}. This is not a training artifact: it explains why
+GTOC4's own mission budget is 10 years, not 1.5. Extending the window to 5--7 years yields 17--37
+reachable asteroids with a $1.5\times$ delta-v margin, which is the pool used for stage 3 and the
+randomised-target configuration.
+
+\section{Reinforcement learning setup}
+\label{sec:rl-setup}
+
+Training uses Stable-Baselines3's \parencite{raffin2021sb3} PPO implementation, with an MLP policy (two hidden layers of 64 units, tanh
+activation), learning rate $3\times10^{-4}$, $n_{steps}=2048$, batch size 64, 10 epochs per
+update, $\gamma=0.99$, GAE $\lambda=0.95$, clip range 0.2, no entropy bonus. Observations are
+normalised online (\texttt{VecNormalize}, observation-only, reward left unnormalised while
+shaping was being tuned). Two baselines -- coasting (zero thrust) and constant tangential thrust
+-- are used throughout as reference points; a policy that cannot beat coasting has not learned
+anything about steering towards the target. Where noted, later curriculum stages are
+\emph{warm-started} from an earlier stage's trained weights.

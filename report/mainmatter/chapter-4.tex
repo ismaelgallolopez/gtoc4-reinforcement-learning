@@ -1,0 +1,100 @@
+\chapter{Discussion and conclusion}
+\label{chapter:discussion}
+
+\section{Answering the scientific question}
+
+\paragraph{Can PPO learn a low-thrust rendezvous guidance law?} Partially, and narrowly. On a
+single, small, near-Earth synthetic target, PPO reliably learns a policy that rendezvous 20/20
+times, beats both baselines, uses only 7.7\% more delta-v than a closed-form impulsive lower
+bound, and -- critically -- remains successful when its exact thrust history is replayed through
+an independent, higher-fidelity integrator (Section~\ref{sec:wp8}). That last result matters: it
+rules out the possibility that stage 1's success is a numerical artifact of the RK4 propagator
+used in training, and confirms the learned control law is solving the real physical problem.
+
+But this success did not scale. Every attempt to move beyond the single easy target -- a larger
+synthetic offset (stage 2), and real GTOC4 asteroids with a randomised target every episode (the
+final multi-seed configuration) -- failed to beat a policy that simply coasts, across four
+different targeted fixes for stage 2 and five independent seeds for the final configuration. The
+failure-mode sweep in Section~\ref{sec:wp7} shows why this is not surprising in hindsight: the
+stage-1 policy's success rate collapses from 10/10 to 0/10 the moment the target's semi-major-axis
+offset is doubled, well short of stage 2's offset. So the honest answer is that PPO, with this
+architecture, reward, and curriculum, learned to solve one problem instance rather than a
+generalisable guidance law.
+
+\paragraph{Does the learned controller resemble bang-bang optimal control?} In the narrow sense
+of throttle, yes: the stage-1 policy thrusts at 100\% for every control step, with no coast phase
+at all (Section~\ref{sec:wp7}). But the policy-probing result -- near-total insensitivity of the
+commanded thrust direction to large, deliberate changes in the relative position error --
+suggests this is not a generic closed-loop guidance law that happens to always want full thrust.
+It looks more like a single, roughly time-indexed maneuver sequence memorised for one specific
+transfer geometry, dressed up as a feedback policy by the fact that its inputs barely change from
+the one situation it was trained on. Whether a policy trained with a broader curriculum (e.g.\
+randomised $\Delta a$ even at stage-1 difficulty) would instead learn a genuinely reactive law is
+an open question this project did not have time to test.
+
+\section{Why generalisation failed: candidate mechanisms}
+
+Several mechanisms, each independently documented in Chapter~\ref{chapter:results}, plausibly
+contributed:
+
+\begin{itemize}
+  \item \textbf{Reward shaping's blind spot for loitering.} $\gamma=1$ potential-based shaping
+        telescopes to net start-to-end progress; a policy that flies through the target's
+        neighbourhood without settling gets almost the same shaped return as one that
+        rendezvous. Stage 1 only converged after its tolerance was loosened enough that
+        ``passing near enough'' became achievable; stage 2's tighter effective margin
+        (delta-v margin only $1.2\times$) may have made the same failure mode unrecoverable
+        rather than merely slow to fix.
+  \item \textbf{Delta-v margin.} Both stage 2 and the real-asteroid pool were deliberately
+        filtered/extended to keep at least a $1.5\times$ delta-v margin over the closed-form
+        estimate, but that estimate is for an \emph{ideal} impulsive transfer; an imperfect
+        learned policy that overshoots or corrects late has much less margin in practice.
+  \item \textbf{Curriculum step size.} The jump from stage 1 ($\Delta a=0.02\,\mathrm{AU}$) to
+        stage 2 ($\Delta a=0.1\,\mathrm{AU}$) is a $5\times$ increase, well past the point
+        (Section~\ref{sec:wp7}) where the stage-1 policy's success rate had already collapsed to
+        zero. A curriculum with intermediate steps was not tried, for lack of time.
+\end{itemize}
+
+\section{Limitations}
+
+\begin{itemize}
+  \item Stage 1's success is a single-seed result (Figure~\ref{fig:stage1-curve}); the final
+        configuration's 5-seed multi-seed result is the more statistically meaningful comparison,
+        and that one failed.
+  \item The sensitivity sweep (Section~\ref{sec:wp6}) was run at half the training budget needed
+        for the baseline itself to converge, so it mostly characterises difficulty-driven
+        convergence speed under a fixed budget rather than sensitivity of converged performance.
+  \item Stage 2 and stage 3/the final configuration remain open, unresolved failures: this report
+        documents four and five falsified fix hypotheses respectively, but does not claim to have
+        found the actual fix.
+  \item The mass-optimality comparison (Section~\ref{sec:wp7}) uses a closed-form impulsive lower
+        bound, not a true continuous-thrust optimal control solution; the $+7.7\%$ gap is
+        indicative, not a tight bound.
+\end{itemize}
+
+\section{Future work}
+
+The most direct next steps are: (1) re-run the sensitivity sweep at full training budget to
+separate genuine sensitivity from convergence-speed artifacts; (2) a finer-grained curriculum
+between stages 1 and 2, to test whether the generalisation cliff in
+Figure~\ref{fig:failure-sweep} can be pushed outward gradually rather than jumped over; (3) a
+non-telescoping or time-aware potential (e.g.\ penalising being far from the target at any point,
+not just at episode end) to address the loitering blind spot directly; and (4) comparing the
+learned trajectory against a true indirect (Pontryagin) or direct-transcription optimal-control
+solution for the same stage-1 target, to turn the mass-optimality gap into a tight bound rather
+than an approximate one.
+
+\section{Conclusion}
+
+A hand-written RK4 dynamics core, validated against Tudat to within a few metres once gravity
+constants are matched, and a Gymnasium/PPO training pipeline, together learn a low-thrust
+rendezvous policy that solves one specific target reliably, efficiently (within 7.7\% of an
+impulsive delta-v lower bound), physically (verified under an independent integrator), and with a
+fully bang-bang (always-on) thrust profile. That policy does not generalise: it fails sharply just
+outside its training distribution, and every attempt to train directly on harder or randomised
+targets -- across a curriculum stage and a five-seed final configuration -- failed to beat simply
+coasting. The project's clearest scientific finding is therefore not that RL solves low-thrust
+guidance, but a more specific and better-supported one: policy-gradient RL with potential-based
+shaping can find an efficient, physically-verified solution to a \emph{single} low-thrust
+rendezvous instance, without thereby learning a controller that generalises even modestly within
+the same family of problems.

@@ -1,4 +1,61 @@
 \chapter{Introduction}
 \label{chapter:introduction}
 
-\emph{An introduction... \cite{example-article}}
+Low-thrust electric propulsion is attractive for deep-space missions because of its high specific
+impulse, but it forces the trajectory design problem into a genuinely different regime than
+chemical propulsion: instead of a handful of discrete impulsive burns, the spacecraft must be
+steered continuously over months or years. The classical approach -- optimal control via
+Pontryagin's minimum principle, or direct transcription and nonlinear programming -- produces
+excellent open-loop solutions but is expensive to (re-)solve and is not naturally a feedback
+policy. This raises a natural question for this project: can a policy trained with model-free
+reinforcement learning (RL) instead learn a reusable, closed-loop \emph{guidance law} for
+low-thrust rendezvous, and if it does, does the resulting control structure resemble the
+bang-bang-like behaviour known to be optimal for mass/time-optimal low-thrust transfers?
+
+\section{Problem statement}
+
+The testbed is the rendezvous leg of the 4th Global Trajectory Optimization Competition (GTOC4):
+a spacecraft with wet mass \SI{1500}{kg} (of which \SI{1000}{kg} is propellant), a constant
+maximum thrust of \SI{0.135}{N} and specific impulse \SI{3000}{s}, must depart Earth and rendezvous
+with one of 1436 catalogued asteroids, inside a launch window between 2015 and 2025 and a total
+mission duration of up to 10 years. The problem is governed by two-body heliocentric dynamics
+(Sun point-mass gravity plus a controllable low-thrust acceleration); the spacecraft's own
+gravitational influence and other perturbations are neglected, matching the original GTOC4
+problem statement.
+
+\section{Scientific question}
+
+This project asks two related questions:
+\begin{enumerate}
+  \item Can a policy-gradient RL agent (Proximal Policy Optimization, PPO \parencite{schulman2017ppo}) learn a low-thrust
+        guidance law that rendezvous with a target under this dynamics model, starting from a
+        curriculum of increasingly difficult targets?
+  \item If it can, does the learned thrust profile recover the bang-bang-like structure expected
+        from optimal control theory, and does the learned policy implement a genuine closed-loop
+        feedback law, or does it merely memorise a single open-loop-like transfer?
+\end{enumerate}
+
+\section{Approach and tools}
+
+The dynamics core is a hand-written, fixed-step 4th-order Runge-Kutta (RK4) integrator in NumPy,
+chosen for speed inside the RL training loop; it is validated against Tudat's adaptive RKF78
+integrator (used only offline, never inside the training loop). The environment is implemented
+with the Gymnasium API and trained with Stable-Baselines3's PPO implementation (PyTorch, CPU-only).
+A curriculum of three stages -- a small synthetic near-Earth offset, a larger synthetic offset
+combining semi-major-axis and inclination change, and real GTOC4 asteroids -- is used to try to
+scale training up from an easy instance towards the full problem, following the same instrument
+used throughout: whenever an assumption in the original project plan turned out not to match
+reality (a training run failing, a target being physically unreachable in the assumed time
+window, background training being interrupted), the discrepancy was diagnosed empirically and
+documented rather than silently patched over. Several of the results in Chapter~\ref{chapter:results}
+are exactly such documented, negative findings.
+
+\section{Report structure}
+
+Chapter~\ref{chapter:methodology} describes the dynamics model and its validation against Tudat,
+the Gymnasium environment, the reward shaping, the curriculum, and the PPO training setup.
+Chapter~\ref{chapter:results} reports training outcomes across the curriculum, a sensitivity
+analysis of the environment's reward/dynamics knobs, an analysis of the learned stage-1
+controller's structure, and an independent verification of that controller's thrust profile
+under Tudat. Chapter~\ref{chapter:discussion} discusses what these results say about the two
+scientific questions above, and concludes.
