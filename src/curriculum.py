@@ -153,6 +153,19 @@ def make_env(stage, catalog_path=None, rng=None):
     return Gtoc4ControlEnv(initial_state(), target, START_EPOCH, time_limit, control_interval=control_interval,
                             position_tolerance=position_tolerance, velocity_tolerance=velocity_tolerance)
 
+def make_stage1_variant(control_interval=86400.0, position_tolerance=None, velocity_tolerance=None,
+                         propellant_penalty=0.0, rendezvous_bonus=10.0):
+    """Stage 1 (the only curriculum stage that reliably converges) with individual env/reward
+    knobs overridable -- used by WP6's sensitivity analysis to perturb one knob at a time around
+    the stage-1 baseline. Tolerances default to stage 1's own values when not overridden."""
+    cfg = STAGES[1]
+    position_tolerance = cfg['position_tolerance'] if position_tolerance is None else position_tolerance
+    velocity_tolerance = cfg['velocity_tolerance'] if velocity_tolerance is None else velocity_tolerance
+    return Gtoc4ControlEnv(initial_state(), cfg['target'], START_EPOCH, cfg['time_limit'],
+                            control_interval=control_interval,
+                            position_tolerance=position_tolerance, velocity_tolerance=velocity_tolerance,
+                            propellant_penalty=propellant_penalty, rendezvous_bonus=rendezvous_bonus)
+
 def make_randomized_env(catalog_path, pool_size=50, time_limit_range=ASTEROID_TIME_LIMIT_RANGE, rng=None):
     """WP5's generalisation step: the target is resampled from the asteroid pool on every reset,
     instead of being fixed for the env's lifetime like make_env(stage=3). Forces the agent to
