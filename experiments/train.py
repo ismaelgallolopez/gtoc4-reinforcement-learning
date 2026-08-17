@@ -35,12 +35,15 @@ class CheckpointCallback(BaseCallback):
             self.training_env.save(os.path.join(self.run_dir, 'vecnormalize.pkl'))
         return True
 
-def train(stage=1, randomize=False, seed=0, total_timesteps=1_000_000, run_name=None, warm_start=None):
+def train(stage=1, randomize=False, flyby=False, seed=0, total_timesteps=1_000_000, run_name=None,
+          warm_start=None):
     run_name = run_name or f"stage{stage}_seed{seed}"
     run_dir = os.path.join(RESULTS_DIR, run_name)
     os.makedirs(run_dir, exist_ok=True)
 
-    if randomize:
+    if flyby:
+        env_fn = lambda: curriculum.make_flyby_variant()
+    elif randomize:
         env_fn = lambda: curriculum.make_randomized_env(CATALOG_PATH, rng=np.random.default_rng(seed))
     elif stage == 3:
         # fixed single asteroid for the whole run: same seed -> same sampled target every reset,
@@ -84,10 +87,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--stage', type=int, default=1)
     parser.add_argument('--randomize', action='store_true')
+    parser.add_argument('--flyby', action='store_true')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--timesteps', type=int, default=1_000_000)
     parser.add_argument('--run-name', type=str, default=None)
     parser.add_argument('--warm-start', type=str, default=None, help='run-name to load weights from')
     args = parser.parse_args()
-    train(stage=args.stage, randomize=args.randomize, seed=args.seed, total_timesteps=args.timesteps,
-          run_name=args.run_name, warm_start=args.warm_start)
+    train(stage=args.stage, randomize=args.randomize, flyby=args.flyby, seed=args.seed,
+          total_timesteps=args.timesteps, run_name=args.run_name, warm_start=args.warm_start)

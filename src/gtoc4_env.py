@@ -43,11 +43,17 @@ class Gtoc4ControlEnv(gym.Env):
     def __init__(self, initial_state, target, start_epoch, time_limit,
                  control_interval=86400.0, integration_substeps=10,
                  position_tolerance=accuracy_position, velocity_tolerance=accuracy_velocity,
+                 require_velocity_match=True,
                  shaping_weight_position=1.0, shaping_weight_velocity=1.0,
                  propellant_penalty=0.0, rendezvous_bonus=10.0, target_sampler=None):
         """target_sampler, if given, is called with no arguments on every reset() and must return
         (target, time_limit); it overrides the fixed target/time_limit passed above, so a single
-        env instance can present a different target each episode (WP5's generalisation step)."""
+        env instance can present a different target each episode (WP5's generalisation step).
+
+        require_velocity_match=False turns the success condition into a GTOC4-style flyby
+        (position within tolerance only, at closest approach at a control step) instead of a
+        rendezvous (position AND velocity within tolerance) -- a flyby doesn't need the
+        spacecraft to match the target's velocity, only to pass close to it."""
         super().__init__()
         self.initial_state = np.asarray(initial_state, dtype=np.float64)
         self.target = target
@@ -58,6 +64,7 @@ class Gtoc4ControlEnv(gym.Env):
         self.integration_substeps = integration_substeps
         self.position_tolerance = position_tolerance
         self.velocity_tolerance = velocity_tolerance
+        self.require_velocity_match = require_velocity_match
         self.w_r = shaping_weight_position
         self.w_v = shaping_weight_velocity
         self.propellant_penalty = propellant_penalty
@@ -120,8 +127,22 @@ class Gtoc4ControlEnv(gym.Env):
         delta_r_before, delta_v_before = self._delta_r, self._delta_v
         phi_before = self._potential(delta_r_before, delta_v_before)
 
-        self.state = dynamics.propagate(self.state, thrust_force, self.control_interval,
-                                         self.integration_substeps, mu, Isp_engine)
+        if self.require_velocity_match:
+            self.state = dynamics.propagate(self.state, thrust_force, self.control_interval,
+                                             self.integration_substeps, mu, Isp_engine)
+            closest_approach = None
+        else:
+            # flyby: check closest approach across substeps, not just the interval endpoint --
+            # at typical heliocentric speeds the spacecraft covers thousands of flyby-tolerances
+            # per control day, so a fast pass can clear the target between two control steps
+            # without either endpoint being within tolerance
+            self.state, substep_states = dynamics.propagate(
+                self.state, thrust_force, self.control_interval, self.integration_substeps,
+                mu, Isp_engine, return_trajectory=True)
+            substep_times = self.start_epoch + self.elapsed_time + np.linspace(
+                0.0, self.control_interval, self.integration_substeps + 1)
+            substep_targets = catalog.target_states([self.target], substep_times, mu)
+            closest_approach = np.min(np.linalg.norm(substep_states[:, :3] - substep_targets[:, :3], axis=1))
         self.elapsed_time += self.control_interval
 
         propellant_exhausted = self.state[6] < spacecraft_dry_mass
@@ -134,8 +155,10 @@ class Gtoc4ControlEnv(gym.Env):
 
         reward = (phi_after - phi_before) - self.propellant_penalty * throttle
 
-        rendezvous = (np.linalg.norm(delta_r_after) < self.position_tolerance and
-                      np.linalg.norm(delta_v_after) < self.velocity_tolerance)
+        position_check = closest_approach if closest_approach is not None else np.linalg.norm(delta_r_after)
+        rendezvous = (position_check < self.position_tolerance and
+                      (not self.require_velocity_match or
+                       np.linalg.norm(delta_v_after) < self.velocity_tolerance))
         diverged = np.linalg.norm(delta_r_after) > DIVERGENCE_LIMIT
         time_up = self.elapsed_time >= self.time_limit
 

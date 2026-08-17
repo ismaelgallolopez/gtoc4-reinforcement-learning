@@ -166,6 +166,39 @@ def make_stage1_variant(control_interval=86400.0, position_tolerance=None, veloc
                             position_tolerance=position_tolerance, velocity_tolerance=velocity_tolerance,
                             propellant_penalty=propellant_penalty, rendezvous_bonus=rendezvous_bonus)
 
+def make_flyby_variant(delta_a=0.02 * AU, delta_i=0.0, delta_M=np.deg2rad(1.0), time_limit=400 * 86400.0,
+                        control_interval=86400.0, position_tolerance=accuracy_position,
+                        shaping_weight_velocity=0.0):
+    """A GTOC4-style flyby task: same near-Earth synthetic target family as stage 1, but success
+    only requires passing within `position_tolerance` (defaults to the true GTOC4 flyby tolerance,
+    accuracy_position = 1000 km) -- no velocity match required. position_tolerance and
+    shaping_weight_velocity are exposed (not just hardcoded) for the same reason
+    make_stage1_variant exposes its tolerances.
+
+    WP11 finding: at the true 1000km tolerance, both a from-scratch policy and one warm-started
+    from the stage-1 rendezvous policy get 0/20 -- worse than a zero-thrust coast (which itself
+    only reaches ~2.95M km on this target family). Per-step diagnosis (evaluate deterministically,
+    log delta_r across the whole episode instead of just the final step) showed why: the
+    warm-started policy *does* close distance (to 1.38M km around day 137, well past the coast
+    baseline), but nothing stops it there without a velocity-shaping term, so it flies through and
+    diverges to >20M km by day 400 -- the same "closes then flies past and diverges" failure mode
+    stage 1 hit before its own tolerance was loosened (see STAGES[1]'s comment), just with no
+    braking term at all this time. Re-evaluating that same warm-started checkpoint with the
+    tolerance loosened to 1.5e6 km (no retraining, same precedent as stage 1's own loosening)
+    gets 5/5 at day 129 -- close to stage 1's own achievable 1e6km rendezvous tolerance, and
+    faster, since there's no terminal velocity match to hold. The from-scratch policy still gets
+    0/5 even at 1.5e6 km (closest approach 2.97M km, essentially the coast baseline) -- warm-
+    starting from stage 1 is load-bearing here, not just a speed-up, mirroring stage 2's earlier
+    "indistinguishable from coasting" failure for cold-start training on this env family.
+    Bottom line: dropping the velocity-match requirement genuinely makes the task easier/faster to
+    solve (closes in ~130 days instead of ~217), but the true GTOC4 1000km tolerance is still
+    ~1000x tighter than what this direct-control PPO setup reaches in this training budget --
+    "flyby" is not a shortcut to a solvable precision target here, just a lighter-weight one."""
+    target = _earth_like_target(delta_a=delta_a, delta_i=delta_i, delta_M=delta_M)
+    return Gtoc4ControlEnv(initial_state(), target, START_EPOCH, time_limit, control_interval=control_interval,
+                            position_tolerance=position_tolerance, require_velocity_match=False,
+                            shaping_weight_velocity=shaping_weight_velocity)
+
 def make_randomized_env(catalog_path, pool_size=50, time_limit_range=ASTEROID_TIME_LIMIT_RANGE, rng=None):
     """WP5's generalisation step: the target is resampled from the asteroid pool on every reset,
     instead of being fixed for the env's lifetime like make_env(stage=3). Forces the agent to

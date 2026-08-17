@@ -20,13 +20,20 @@ def rk4_step(state, thrust_force, dt, mu, Isp):
     k4 = state_derivative(state + dt * k3, thrust_force, mu, Isp)
     return state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
-def propagate(state, thrust_force, duration, n_substeps, mu, Isp):
+def propagate(state, thrust_force, duration, n_substeps, mu, Isp, return_trajectory=False):
     """Propagates with a constant thrust_force over duration, using n_substeps RK4 steps.
-    Called once per control step by the RL env, and with many substeps for validation runs."""
+    Called once per control step by the RL env, and with many substeps for validation runs.
+    return_trajectory=True additionally returns the state at every substep (including the
+    initial one), for closest-approach checks within a single control interval -- e.g. a
+    GTOC4-style flyby, where the spacecraft can pass within tolerance of a fast-moving target
+    between two control steps without either endpoint being that close."""
     dt = duration / n_substeps
+    trajectory = [state] if return_trajectory else None
     for _ in range(n_substeps):
         state = rk4_step(state, thrust_force, dt, mu, Isp)
-    return state
+        if return_trajectory:
+            trajectory.append(state)
+    return (state, np.array(trajectory)) if return_trajectory else state
 
 def solve_kepler(M, e, tol=1e-12, max_iter=50):
     """Solves M = E - e*sin(E) for the eccentric anomaly E. M and e may be arrays."""

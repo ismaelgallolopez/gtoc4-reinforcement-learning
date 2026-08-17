@@ -15,12 +15,14 @@ import curriculum
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), '..', 'results')
 CATALOG_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'gtoc4_problem_data.txt')
 
-def evaluate(run_name, stage=1, randomize=False, n_episodes=20, seed=1234):
+def evaluate(run_name, stage=1, randomize=False, flyby=False, n_episodes=20, seed=1234):
     """seed is used for the randomised-target sampler (should differ from training seeds, to test
     generalisation to unseen targets) and, for stage 3, to pick the fixed asteroid -- pass the
     same seed the run was trained with there, since stage 3 fixes one target for the whole run."""
     run_dir = os.path.join(RESULTS_DIR, run_name)
-    if randomize:
+    if flyby:
+        env_fn = lambda: curriculum.make_flyby_variant()
+    elif randomize:
         env_fn = lambda: curriculum.make_randomized_env(CATALOG_PATH, rng=np.random.default_rng(seed))
     elif stage == 3:
         env_fn = lambda: curriculum.make_env(stage, catalog_path=CATALOG_PATH, rng=np.random.default_rng(seed))
@@ -52,7 +54,7 @@ def evaluate(run_name, stage=1, randomize=False, n_episodes=20, seed=1234):
         final_masses.append(info['mass'])
         returns.append(episode_return)
 
-    label = "randomised targets" if randomize else f"stage {stage}"
+    label = "flyby" if flyby else ("randomised targets" if randomize else f"stage {stage}")
     print(f"{run_name} on {label}, {n_episodes} deterministic episodes:")
     print(f"  success rate: {successes}/{n_episodes}")
     print(f"  final |delta_r|: {np.mean(final_drs) / 1e3:.1f} +- {np.std(final_drs) / 1e3:.1f} km")
@@ -67,6 +69,8 @@ if __name__ == '__main__':
     parser.add_argument('--run-name', type=str, required=True)
     parser.add_argument('--stage', type=int, default=1)
     parser.add_argument('--randomize', action='store_true')
+    parser.add_argument('--flyby', action='store_true')
     parser.add_argument('--episodes', type=int, default=20)
     args = parser.parse_args()
-    evaluate(args.run_name, stage=args.stage, randomize=args.randomize, n_episodes=args.episodes)
+    evaluate(args.run_name, stage=args.stage, randomize=args.randomize, flyby=args.flyby,
+             n_episodes=args.episodes)
