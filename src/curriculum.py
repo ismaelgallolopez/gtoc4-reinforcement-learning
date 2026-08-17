@@ -4,10 +4,12 @@ import numpy as np
 from tudatpy import constants as tudat_constants
 
 import catalog
+import dynamics
 from gtoc4_env import Gtoc4ControlEnv
 from constants import (a_earth, eccentricity_earth, inclination_earth, lan_earth,
                         arg_periapsis_earth, mean_anomaly_earth, epoch,
-                        sun_gravitational_parameter as mu, spacecraft_wet_mass, thrust_max,
+                        sun_gravitational_parameter as mu, spacecraft_wet_mass,
+                        spacecraft_dry_mass, thrust_max, Isp_engine,
                         accuracy_position, accuracy_velocity, launch_interval)
 
 AU = tudat_constants.ASTRONOMICAL_UNIT
@@ -117,11 +119,21 @@ def _delta_v_needed(target, time_limit):
     delta_theta = np.arccos(np.clip(cos_angle, -1.0, 1.0))
     return dv_energy + v_circ * delta_theta
 
+def delta_v_budget(time_limit):
+    """Delta-v deliverable in `time_limit` seconds of continuous full thrust, from the rocket
+    equation with a thrust-limited mass history: mdot = T/(Isp*g0), m_f = max(m_dry, m0 - mdot*t),
+    dv = Isp*g0*ln(m0/m_f). The previous estimate, a_max * time_limit with a_max = T/m_wet, held
+    the acceleration at its *initial* (worst) value for the whole burn and so understated the
+    budget by ~9% at 600 days and ~35% at 5 years; it also grew without bound past propellant
+    exhaustion instead of saturating at Isp*g0*ln(3) = 32.32 km/s after ~6.9 years."""
+    mdot = thrust_max / (Isp_engine * dynamics.g0)
+    m_final = max(spacecraft_dry_mass, spacecraft_wet_mass - mdot * time_limit)
+    return Isp_engine * dynamics.g0 * np.log(spacecraft_wet_mass / m_final)
+
 def build_reachable_pool(catalog_path, pool_size=50, scan_size=2000, margin_min=1.5, time_limit=600 * 86400.0):
     """Filters the catalog down to `pool_size` asteroids reachable within margin_min x the
     delta-v budget at `time_limit` (the most generous curriculum window)."""
-    a_max = thrust_max / spacecraft_wet_mass
-    dv_budget = a_max * time_limit
+    dv_budget = delta_v_budget(time_limit)
 
     candidates = catalog.parse_asteroids(catalog_path, n_asteroids=scan_size)
     reachable = [ast for ast in candidates if _delta_v_needed(ast, time_limit) < dv_budget / margin_min]

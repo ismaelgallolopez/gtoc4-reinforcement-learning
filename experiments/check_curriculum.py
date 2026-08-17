@@ -19,10 +19,11 @@ def check_delta_v_budget():
       *vectors* differing mainly in direction, not magnitude -- chord length ~ v * delta_theta for
       small angles. This dominates unless the phase offset is kept small, since v ~ 30 km/s means
       even a few degrees costs hundreds to thousands of m/s.
-    Uses the *initial* (heaviest) mass, so it's a conservative estimate of available delta_v --
-    actual acceleration only grows as propellant burns."""
+    2026-08-18 (legality track, phase 1b): the available delta_v is now curriculum.delta_v_budget,
+    the rocket equation with a thrust-limited mass history, instead of a_max * time_limit at the
+    initial (heaviest) mass. The old form was described here as "conservative"; it is, by ~9% at
+    400-600 days and by ~35% at 5 years, and it also never saturated at the propellant limit."""
     v_circ = np.sqrt(mu / a_earth)
-    a_max = thrust_max / spacecraft_wet_mass
 
     for stage in (1, 2):
         cfg = curriculum.STAGES[stage]
@@ -38,7 +39,7 @@ def check_delta_v_budget():
         delta_v_phasing = v_circ * delta_theta
 
         delta_v_needed = delta_v_energy + delta_v_phasing
-        delta_v_budget = a_max * cfg['time_limit']
+        delta_v_budget = curriculum.delta_v_budget(cfg['time_limit'])
         margin = delta_v_budget / delta_v_needed
         print(f"stage {stage}: delta_v needed ~{delta_v_needed:.1f} m/s "
               f"(energy {delta_v_energy:.1f} + phasing {delta_v_phasing:.1f}, "

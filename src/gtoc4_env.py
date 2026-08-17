@@ -31,6 +31,30 @@ V_REF = np.sqrt(mu / AU)  # characteristic heliocentric velocity (circular speed
 DIVERGENCE_LIMIT = 5 * AU
 DIRECTION_EPS = 1e-6
 
+def closest_approach_on_segments(rel_positions, rel_velocities, times):
+    """Closest approach across a sampled relative trajectory, returned as (distance, epoch).
+
+    Taking np.min over the samples themselves is not a measurement of closest approach at flyby
+    scale: at control_interval=86400 with integration_substeps=10 the samples are 2.4 h apart, so
+    at a ~5 km/s relative speed consecutive samples are ~43,000 km apart (~200,000 km at the 5-day
+    asteroid interval) and the sampled minimum is bounded far above the 1000 km GTOC4 tolerance no
+    matter how good the trajectory is. Between two consecutive samples the relative motion is
+    treated as linear, dr(t) = dr0 + dv*t, which is minimised at t* = -(dr0 . dv)/|dv|^2 clamped to
+    the sub-interval; the true encounter epoch generally does not land on a control-step boundary,
+    so it is returned too (the GTOC4 solution format needs it)."""
+    best_distance = np.inf
+    best_epoch = times[0]
+    for k in range(len(times) - 1):
+        dr0 = rel_positions[k]
+        dv = rel_velocities[k]
+        dt = times[k + 1] - times[k]
+        speed_sq = np.dot(dv, dv)
+        t_star = 0.0 if speed_sq == 0.0 else np.clip(-np.dot(dr0, dv) / speed_sq, 0.0, dt)
+        distance = np.linalg.norm(dr0 + dv * t_star)
+        if distance < best_distance:
+            best_distance, best_epoch = distance, times[k] + t_star
+    return float(best_distance), float(best_epoch)
+
 def rtn_frame(r, v):
     """Rotation matrix from RTN to inertial coordinates: columns are R-hat, T-hat, N-hat."""
     r_hat = r / np.linalg.norm(r)
@@ -131,6 +155,7 @@ class Gtoc4ControlEnv(gym.Env):
             self.state = dynamics.propagate(self.state, thrust_force, self.control_interval,
                                              self.integration_substeps, mu, Isp_engine)
             closest_approach = None
+            closest_approach_epoch = None
         else:
             # flyby: check closest approach across substeps, not just the interval endpoint --
             # at typical heliocentric speeds the spacecraft covers thousands of flyby-tolerances
@@ -142,7 +167,10 @@ class Gtoc4ControlEnv(gym.Env):
             substep_times = self.start_epoch + self.elapsed_time + np.linspace(
                 0.0, self.control_interval, self.integration_substeps + 1)
             substep_targets = catalog.target_states([self.target], substep_times, mu)
-            closest_approach = np.min(np.linalg.norm(substep_states[:, :3] - substep_targets[:, :3], axis=1))
+            closest_approach, closest_approach_epoch = closest_approach_on_segments(
+                substep_states[:, :3] - substep_targets[:, :3],
+                substep_states[:, 3:6] - substep_targets[:, 3:],
+                substep_times)
         self.elapsed_time += self.control_interval
 
         propellant_exhausted = self.state[6] < spacecraft_dry_mass
@@ -170,8 +198,10 @@ class Gtoc4ControlEnv(gym.Env):
 
         info = {
             'delta_r': delta_r_after, 'delta_v': delta_v_after, 'mass': self.state[6],
+            'position': self.state[:3].copy(), 'velocity': self.state[3:6].copy(),
             'rtn_action': rtn_unit, 'throttle': throttle, 'success': rendezvous,
             'total_impulse': self.total_impulse,
+            'closest_approach': closest_approach, 'closest_approach_epoch': closest_approach_epoch,
             # scalar duplicates, for SB3 Monitor(info_keywords=...) which needs scalars per episode
             'delta_r_norm': float(np.linalg.norm(delta_r_after)),
             'delta_v_norm': float(np.linalg.norm(delta_v_after)),

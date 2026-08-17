@@ -15,12 +15,13 @@ time_mission_max = 10.0 * constants.JULIAN_YEAR # s
 
 # earth's orbital elements in the J2000 frame at epoch
 a_earth = 0.999988049532578 * constants.ASTRONOMICAL_UNIT # m
-eccentricity_earth = 1.671681164160e-2
+eccentricity_earth = 1.671681163160e-2
 inclination_earth = 0.8854353079654e-3 # deg
 lan_earth = 175.40647696473 # deg
 arg_periapsis_earth = 287.61577546182 # deg
-mean_anomaly_earth = 257.606837077535 # deg
-epoch = 54000.0 # MJD2000
+mean_anomaly_earth = 257.60683707535 # deg
+epoch = 54000.0 # MJD (not MJD2000: catalog.mjd_to_et subtracts MJD_J2000 = 51544.5 from it,
+                # and the asteroid catalog's own epoch column, 54800, is likewise plain MJD)
 
 # constraints on the rendevouz/flyby
 accuracy_position = 1000.0e3 # m
