@@ -413,3 +413,179 @@ transfer.
   best epoch found here. Not taken because every recorded curriculum result in `src/curriculum.py`
   was measured at the current value, and silently moving it would invalidate all of them. Phase 4's
   sequencer passes its chosen epoch explicitly instead.
+
+---
+
+## Phase 3 — Legality bookkeeping and a scorable output
+
+### What changed
+
+- `src/mission.py`: new. `Mission` holds `(epoch, r, v, m, thrust)` samples plus the encounters
+  recorded against them, enforces every rule from the Context list as the mission is built, and
+  exposes `J` (distinct asteroids flown by before the final rendezvous) and `K = m_f`. Illegal
+  operations raise `LegalityError` — nothing is silently recorded. Also `write_solution`,
+  `read_solution` and `check_solution`, the last being an independent re-verifier that trusts
+  nothing from the `Mission` object.
+- `src/dynamics.py`: new `cartesian_to_keplerian(state, mu)`, the scalar inverse of the existing
+  `keplerian_to_cartesian`. Needed to define a synthetic body sitting on a given Cartesian state.
+  Round-trip verified over 200 random orbits: worst position error 0.58 mm.
+- `experiments/acceptance_phase3.py`: new, the positive and negative acceptance tests.
+- `results/legality_phase3/`: the written solution file and its four mutations.
+
+`src/gtoc4_env.py` was not modified.
+
+### Solution-file layout used
+
+The GTOC4 problem statement document is **not in this repository** — `data/gtoc4_problem_data.txt`
+is the asteroid ephemeris table only, and there is no statement PDF anywhere under
+`~/workspace/tud/`. The column layout below is therefore an assumption, to be checked against the
+statement before any real submission:
+
+```
+MJD  x[km]  y[km]  z[km]  vx[km/s]  vy[km/s]  vz[km/s]  m[kg]  Tx[N]  Ty[N]  Tz[N]  body
+```
+
+J2000 heliocentric ecliptic frame, one row per sample, one-day increments within each inter-body
+phase plus a partial-day row at each flyby and at the final rendezvous. `body` is `EARTH` on the
+launch row, the asteroid's catalogue name on an encounter row, `-` otherwise. The thrust on a row
+is the constant thrust applied from that row's epoch to the next row's epoch, zero on the last row.
+`#` lines are comments and the checker reads no information from them.
+
+The `body` column is the part most likely to differ from the statement. It is there because the
+brief requires the checker to re-verify every rule *from the file alone*, which is impossible
+without knowing which asteroid each encounter claims to be. If the statement specifies encounter
+identification some other way (a separate header block, a numeric index), only `write_solution`
+and `read_solution` change; nothing in `Mission` or the rule checks depends on it.
+
+First and last lines of the produced file:
+
+```
+# GTOC4 solution, J2000 heliocentric ecliptic frame
+# launch MJD 58430.000000, |v_inf| 2624.881 m/s, tau 300.620 d
+# J = 1, K = m_f = 1500.000000 kg, sequence: A B
+# MJD x[km] y[km] z[km] vx[km/s] vy[km/s] vz[km/s] m[kg] Tx[N] Ty[N] Tz[N] body
+58430.0000000000 104187826.175601 105436617.954153 -1753.104997 -20.174306121 18.825961904 0.799706019 1500.000000 0.000000000 0.000000000 0.000000000 EARTH
+58431.0000000000 102429001.393107 107047055.364259 67338.256472 -20.538285601 18.451645841 0.799590454 1500.000000 0.000000000 0.000000000 0.000000000 -
+...
+58730.3700000000 89658867.136719 117112036.830828 535825.517703 -22.859196213 15.742554749 0.792288880 1500.000000 0.000000000 0.000000000 0.000000000 -
+58730.6200000000 89164244.810262 117450944.698469 552933.731318 -22.939101883 15.637742121 0.791802375 1500.000000 0.000000000 0.000000000 0.000000000 B
+```
+
+### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/acceptance_phase3.py
+--- positive: hand-built legal mission, written out and re-verified from the file ---
+launch                 : MJD 58430.0, |v_inf| = 2624.9 m/s
+samples                : 303
+duration tau           : 300.620 d = 0.8231 yr
+sequence               : A -> B
+J (Mission)            : 1
+K = m_f (Mission)      : 1500.000 kg
+written                : .../results/legality_phase3/solution.txt (47185 bytes)
+checker violations     : []
+J (checker)            : 1
+K (checker)            : 1500.000 kg
+PASS: legal mission accepted, J and K re-derived from the file
+
+--- refusal: Mission rejects illegal encounters at construction time ---
+  advance after the final rendezvous     -> the mission already ended with a rendezvous; cannot advance further
+  |v_inf| = 5 km/s                       -> launch |v_inf| = 5000.0 m/s exceeds the 4000.0 m/s limit
+  launch at MJD 50000                    -> launch epoch MJD 50000.0000 outside the legal window (57023.0, 61041.0)
+  flyby of A from 1e8 km away            -> 'A': position miss 14728124.458 km exceeds the 1000 km tolerance
+PASS: all four illegal operations refused
+
+--- negative: four mutations of that same file, each must be rejected ---
+  revisit an asteroid
+      - 'A' at MJD 58505.0000: position miss 4906021.963 km exceeds 1000 km
+      - asteroid 'A' is visited more than once
+      => rejected, expected reason 'visited more than once' present
+
+  tau = 10.5 years
+      - mission duration tau = 10.5000 yr exceeds 10.0 yr
+      - sample spacing reaches 3534.7550 d, exceeding the one-day increment
+      - sample 301->302 (MJD 58730.3700) is not consistent with two-body motion under the declared thrust: 11201536123.3 km, 31822.4400 m/s, 0.000000 kg off
+      - 'B' at MJD 62265.1250: position miss 57347601.433 km exceeds 1000 km
+      - rendezvous with 'B': velocity miss 12780.6160 m/s exceeds 1.0 m/s
+      => rejected, expected reason 'exceeds 10.0 yr' present
+
+  m_f below 500 kg
+      - final mass 450.000 kg is below the 500.0 kg minimum
+      => rejected, expected reason 'below the 500.0 kg minimum' present
+
+  rendezvous target already flown by
+      - asteroid 'B' is visited more than once
+      - rendezvous target 'B' was already visited earlier
+      => rejected, expected reason 'was already visited earlier' present
+
+PASS: all four mutations rejected with the correct reason
+
+all Phase 3 acceptance tests passed
+```
+
+### Numbers
+
+| quantity | value |
+|---|---|
+| test mission launch | MJD 58430.0, `\|v_inf\|` = 2624.9 m/s |
+| samples written | 303 |
+| `tau` | 300.620 d = 0.8231 yr |
+| `J` (from `Mission`, and re-derived from the file) | 1 |
+| `K = m_f` | 1500.000 kg |
+| checker violations on the legal file | 0 |
+| `cartesian_to_keplerian` round-trip, worst of 200 random orbits | 0.58 mm |
+
+### Interpretation
+
+**The positive test is a round trip, not a self-check.** `check_solution` re-parses the file and
+recomputes the launch `v_inf` against Earth's ephemeris, the duration, the sample spacing, the mass
+monotonicity and floor, the peak thrust, every encounter's position (and the last one's velocity)
+against the body ephemerides, the visit-once rule, and the rendezvous-not-previously-visited rule.
+It re-derives `J` and `K` from the file's own contents and both match the `Mission` object. Nothing
+is carried across from the producer.
+
+**"No gravity assists" is enforced dynamically, not by name.** There is no list of forbidden bodies
+to check against. Instead the checker re-propagates every consecutive pair of samples under
+two-body motion plus the thrust the file itself declares, and rejects the file if the next sample
+is more than 10 km / 1 m/s away. A gravity assist bends the trajectory by far more than that, and
+so does any impulse not paid for out of the thrust and mass columns. This one check therefore
+covers the gravity-assist ban, the `T <= 0.135 N` limit's honesty (a file cannot under-declare its
+thrust) and `Isp = 3000 s` (the mass drop must match `T/(Isp*g0)` to within 1 mg per step)
+simultaneously. The 10 km threshold corresponds to roughly 0.12 m/s of hidden delta-v per one-day
+step; RK4 at 10 substeps per day self-agrees to well under a millimetre, so the threshold is loose
+by many orders of magnitude relative to numerical noise and still tight relative to any physically
+meaningful cheat.
+
+**The negative tests confirm the checker reports the right reason, not merely that it fails.** The
+`tau` mutation is the interesting one: moving the final epoch out by 10.5 years breaks five rules
+at once (duration, sample spacing, dynamical consistency, the rendezvous position match and its
+velocity match), and all five are reported. That is why `check_solution` collects violations rather
+than raising on the first — a fail-fast checker would have reported the spacing violation and
+concealed the fact that the mission is also too long. The `m_f` mutation is the cleanest: setting
+every mass row to 450 kg keeps `dm = 0` consistent with the zero thrust column, so the *only*
+violation is the 500 kg floor, exactly as intended.
+
+**What this phase does not establish.** The test mission's `J = 1` is arithmetic, not
+astrodynamics: both "asteroids" were reverse-engineered to sit on a coast arc. It proves the
+bookkeeping and the file format are correct, and it gives Phase 4 a scoring path it can trust. It
+says nothing about whether a real catalogue asteroid can be reached.
+
+### Choices taken where the brief left it open
+
+- **Synthetic test bodies rather than real catalogue asteroids.** Putting the spacecraft within
+  1000 km of a real asteroid requires solving a transfer, which is Phase 4's Lambert solver.
+  Rejected alternative: defer the Phase 3 acceptance tests until Phase 4 exists, so they could use
+  real targets. Not taken because it would leave the writer and checker unvalidated while Phase 4
+  was being built on top of them, and the bug class those tests catch (a mis-signed column, a
+  frame slip, an off-by-one in the encounter index) does not care whether the body is real.
+- **`check_solution` takes `ephemerides` explicitly and does not fall back to the catalogue.** A
+  checker that silently guesses which ephemeris an unrecognised name refers to is not checking
+  anything; an unknown name is reported as a violation instead. Phase 4 passes the parsed
+  catalogue.
+- **Launch mass is not checked against 1500 kg.** The rule list in the brief constrains `m_f >= 500
+  kg` and `T <= 0.135 N` but does not restate a fixed launch mass, and `Mission` accepts a
+  `launch_mass` argument defaulting to `spacecraft_wet_mass`. If the statement fixes the launch mass
+  at 1500 kg, one line in `check_solution` adds it.
+- **`J` counts flybys only, excluding the final rendezvous target**, per the brief's wording
+  ("distinct asteroids visited before the final rendezvous"). Both `Mission.J` and the checker's
+  independently computed `J` use this definition, so they cannot silently disagree.

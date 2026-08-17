@@ -46,6 +46,28 @@ def solve_kepler(M, e, tol=1e-12, max_iter=50):
             break
     return E
 
+def cartesian_to_keplerian(state, mu):
+    """Inverse of keplerian_to_cartesian for a single state: returns (a, e, i, omega, lan, M).
+    Scalar only, and undefined for exactly circular or exactly equatorial orbits -- it exists so a
+    body can be defined to sit on a given Cartesian state (the legality track's Phase 3 builds its
+    synthetic test targets this way), not as a general-purpose element converter."""
+    r, v = state[:3], state[3:6]
+    r_norm, v_norm = np.linalg.norm(r), np.linalg.norm(v)
+    h = np.cross(r, v)
+    node = np.cross([0.0, 0.0, 1.0], h)
+    e_vec = ((v_norm**2 - mu / r_norm) * r - np.dot(r, v) * v) / mu
+
+    e = np.linalg.norm(e_vec)
+    a = 1.0 / (2.0 / r_norm - v_norm**2 / mu)
+    i = np.arccos(np.clip(h[2] / np.linalg.norm(h), -1.0, 1.0))
+    lan = np.arctan2(node[1], node[0])
+    omega = np.arctan2(np.dot(np.cross(node, e_vec), h) / np.linalg.norm(h),
+                       np.dot(node, e_vec))
+    true_anomaly = np.arctan2(np.dot(np.cross(e_vec, r), h) / np.linalg.norm(h), np.dot(e_vec, r))
+    E = 2 * np.arctan2(np.sqrt(1 - e) * np.sin(true_anomaly / 2),
+                       np.sqrt(1 + e) * np.cos(true_anomaly / 2))
+    return a, e, i, np.mod(omega, 2 * np.pi), np.mod(lan, 2 * np.pi), E - e * np.sin(E)
+
 def keplerian_to_cartesian(a, e, i, omega, lan, M, mu):
     """Vectorised Keplerian -> Cartesian state. All angle/element args may be arrays of the same shape.
     Returns an array of shape (..., 6): [rx,ry,rz,vx,vy,vz]."""
