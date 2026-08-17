@@ -82,13 +82,24 @@ STAGES = {
     ),
 }
 
-def initial_state():
+def initial_state(start_epoch=None, v_infinity=None):
     """Spacecraft starts exactly on Earth's heliocentric orbit (no departure kick). The 4 km/s
     dummy excess velocity used elsewhere (verify_tudat.py, validate_dynamics.py) was only ever a
     placeholder direction for validating dynamics -- adding it here would put the spacecraft on an
     a~0.8 AU, fairly eccentric orbit, hundreds of millions of km from a "near-identical" stage-1
-    target, defeating the point of an easy first curriculum stage."""
-    earth_state = catalog.earth_initial_state(START_EPOCH, mu)
+    target, defeating the point of an easy first curriculum stage.
+
+    2026-08-18 (legality track, phase 2): `v_infinity` (a 3-vector in m/s, added to Earth's
+    heliocentric velocity) and `start_epoch` are now optional arguments, both defaulting to the
+    previous fixed behaviour so every existing caller is unaffected. The docstring above remains
+    correct as a *curriculum* argument -- a departure kick does defeat the point of an easy
+    near-Earth stage -- but it is not an argument about the GTOC4 mission, where the rules grant
+    |v_inf| <= 4 km/s in any direction for free and pinning it to zero simply forfeits delta-v."""
+    start_epoch = START_EPOCH if start_epoch is None else start_epoch
+    earth_state = catalog.earth_initial_state(start_epoch, mu)
+    if v_infinity is not None:
+        earth_state = earth_state.copy()
+        earth_state[3:6] += np.asarray(v_infinity, dtype=np.float64)
     return np.concatenate([earth_state, [spacecraft_wet_mass]])
 
 # stage 3's window departs sharply from the plan's stated "300-600 days": scanning the full 1436-
@@ -103,21 +114,30 @@ def initial_state():
 ASTEROID_TIME_LIMIT_RANGE = (5 * 365.25, 7 * 365.25)  # days
 ASTEROID_CONTROL_INTERVAL = 5 * 86400.0  # s
 
-def _delta_v_needed(target, time_limit):
+def _delta_v_needed(target, time_limit, start_epoch=None, v_infinity_magnitude=0.0):
     """Closed-form delta-v estimate for reaching `target` from Earth within time_limit: energy
     (semi-major-axis) term + phasing term. Same formula check_curriculum.py uses to verify the
     synthetic stages -- reused here to filter the real asteroid pool, since the raw GTOC4 catalog
-    isn't sorted by difficulty (a first uniform draw needed ~50 km/s against a ~3 km/s budget)."""
+    isn't sorted by difficulty (a first uniform draw needed ~50 km/s against a ~3 km/s budget).
+
+    2026-08-18 (legality track, phase 2): `start_epoch` is now a parameter -- it was pinned to the
+    module-level START_EPOCH, itself pinned to launch_interval[0], one arbitrary day out of a legal
+    window 4018 days wide, even though the phasing term is what dominates this estimate. And
+    `v_infinity_magnitude` is credited against the requirement: the launch hyperbolic excess is a
+    free impulse of arbitrary direction applied before the low-thrust arc begins, so at this
+    estimator's fidelity (a sum of two scalar delta-v contributions) the simplest model is that it
+    offsets the requirement one-for-one, floored at zero. Both default to the previous behaviour."""
+    start_epoch = START_EPOCH if start_epoch is None else start_epoch
     v_circ = np.sqrt(mu / a_earth)
     delta_a = target['a'] - a_earth
     dv_energy = abs(delta_a) * np.sqrt(mu) / (2 * a_earth**1.5)
 
-    earth_at_start = catalog.earth_initial_state(START_EPOCH, mu)
-    target_at_start = catalog.target_states([target], START_EPOCH, mu)[0]
+    earth_at_start = catalog.earth_initial_state(start_epoch, mu)
+    target_at_start = catalog.target_states([target], start_epoch, mu)[0]
     cos_angle = np.dot(earth_at_start[:3], target_at_start[:3]) / (
         np.linalg.norm(earth_at_start[:3]) * np.linalg.norm(target_at_start[:3]))
     delta_theta = np.arccos(np.clip(cos_angle, -1.0, 1.0))
-    return dv_energy + v_circ * delta_theta
+    return max(0.0, dv_energy + v_circ * delta_theta - v_infinity_magnitude)
 
 def delta_v_budget(time_limit):
     """Delta-v deliverable in `time_limit` seconds of continuous full thrust, from the rocket
@@ -130,13 +150,16 @@ def delta_v_budget(time_limit):
     m_final = max(spacecraft_dry_mass, spacecraft_wet_mass - mdot * time_limit)
     return Isp_engine * dynamics.g0 * np.log(spacecraft_wet_mass / m_final)
 
-def build_reachable_pool(catalog_path, pool_size=50, scan_size=2000, margin_min=1.5, time_limit=600 * 86400.0):
+def build_reachable_pool(catalog_path, pool_size=50, scan_size=2000, margin_min=1.5, time_limit=600 * 86400.0,
+                          start_epoch=None, v_infinity_magnitude=0.0):
     """Filters the catalog down to `pool_size` asteroids reachable within margin_min x the
     delta-v budget at `time_limit` (the most generous curriculum window)."""
     dv_budget = delta_v_budget(time_limit)
 
     candidates = catalog.parse_asteroids(catalog_path, n_asteroids=scan_size)
-    reachable = [ast for ast in candidates if _delta_v_needed(ast, time_limit) < dv_budget / margin_min]
+    reachable = [ast for ast in candidates
+                 if _delta_v_needed(ast, time_limit, start_epoch, v_infinity_magnitude)
+                 < dv_budget / margin_min]
     return reachable[:pool_size]
 
 def sample_asteroid_target(catalog_path, rng, pool_size=50):

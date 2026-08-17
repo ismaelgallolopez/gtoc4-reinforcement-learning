@@ -9,8 +9,13 @@ spacecraft_wet_mass = spacecraft_dry_mass + spacecraft_propellant_mass # kg
 scape_velocity_max = 4.0e3 # m/s
 Isp_engine = 3000.0 # s
 thrust_max = 0.135 # N
+# the legal launch window is MJD 57023-61041, i.e. 2015-01-01 through the end of 2025, 4018 days
+# wide. The upper bound was transcribed as 2025-01-01, which is 3653 days -- 365 days of the legal
+# window, ~10%, silently discarded (legality track, phase 2). Note tudatpy's DateTime(y, m, d)
+# resolves to 12:00, not 00:00, so these are MJD 57023.5 and 61041.5: half a day inside the stated
+# window at each end, which is conservative and therefore legal.
 launch_interval = [time_representation.DateTime(2015, 1, 1).to_epoch(),
-                   time_representation.DateTime(2025, 1, 1).to_epoch()]
+                   time_representation.DateTime(2026, 1, 1).to_epoch()]
 time_mission_max = 10.0 * constants.JULIAN_YEAR # s
 
 # earth's orbital elements in the J2000 frame at epoch

@@ -214,3 +214,202 @@ these were re-run (no training budget in this track for that).
   `build_reachable_pool`. Rejected alternative: leave it, per the minimal-diff rule. Taken because
   it held an independent second copy of the same incorrect budget formula, and leaving it would mean
   two functions in the repo disagreeing about the spacecraft's delta-v.
+
+---
+
+## Phase 2 — Claim the delta-v the rules already grant
+
+### What changed
+
+- `src/curriculum.py`:
+  - `initial_state(start_epoch=None, v_infinity=None)` — `v_infinity` is a 3-vector in m/s added to
+    Earth's heliocentric velocity; `start_epoch` overrides the module-level `START_EPOCH`. Both
+    default to `None`, reproducing the previous behaviour exactly, so no existing caller changes.
+  - `_delta_v_needed(target, time_limit, start_epoch=None, v_infinity_magnitude=0.0)` — same.
+  - `build_reachable_pool(..., start_epoch=None, v_infinity_magnitude=0.0)` — same, forwarded.
+  - Dated notes appended beneath the original docstring text in all three; nothing removed.
+- `src/constants.py`: `launch_interval` upper bound corrected from 2025-01-01 to 2026-01-01.
+- `experiments/scan_reachability.py`: new, the deliverable scan + acceptance test + figure.
+- `figures/legality_reachability_scan.png`, `results/legality_reachability_scan.csv`: outputs.
+
+Nothing was wired into the action or observation space. `START_EPOCH` itself is unchanged, so
+`make_env`, `make_stage1_variant`, `make_flyby_variant` and `make_randomized_env` all still build
+the identical environments they did before (verified: stage 1, stage 3 and the flyby variant all
+reset and step unchanged).
+
+### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/scan_reachability.py
+scanning 41 launch epochs over MJD 57024-61042 (4018 days)
+  epoch 1/41 (MJD 57024): cheapest target 3.50 km/s
+  epoch 2/41 (MJD 57124): cheapest target 4.12 km/s
+  epoch 3/41 (MJD 57224): cheapest target 1.88 km/s
+  epoch 4/41 (MJD 57325): cheapest target 3.54 km/s
+  epoch 5/41 (MJD 57425): cheapest target 4.21 km/s
+  epoch 6/41 (MJD 57526): cheapest target 3.56 km/s
+  epoch 7/41 (MJD 57626): cheapest target 3.79 km/s
+  epoch 8/41 (MJD 57727): cheapest target 1.42 km/s
+  epoch 9/41 (MJD 57827): cheapest target 2.95 km/s
+  epoch 10/41 (MJD 57928): cheapest target 2.29 km/s
+  epoch 11/41 (MJD 58028): cheapest target 1.43 km/s
+  epoch 12/41 (MJD 58128): cheapest target 2.20 km/s
+  epoch 13/41 (MJD 58229): cheapest target 1.37 km/s
+  epoch 14/41 (MJD 58329): cheapest target 2.34 km/s
+  epoch 15/41 (MJD 58430): cheapest target 1.06 km/s
+  epoch 16/41 (MJD 58530): cheapest target 3.15 km/s
+  epoch 17/41 (MJD 58631): cheapest target 1.66 km/s
+  epoch 18/41 (MJD 58731): cheapest target 2.64 km/s
+  epoch 19/41 (MJD 58832): cheapest target 3.67 km/s
+  epoch 20/41 (MJD 58932): cheapest target 2.28 km/s
+  epoch 21/41 (MJD 59032): cheapest target 2.74 km/s
+  epoch 22/41 (MJD 59133): cheapest target 1.20 km/s
+  epoch 23/41 (MJD 59233): cheapest target 3.85 km/s
+  epoch 24/41 (MJD 59334): cheapest target 3.63 km/s
+  epoch 25/41 (MJD 59434): cheapest target 3.97 km/s
+  epoch 26/41 (MJD 59535): cheapest target 3.77 km/s
+  epoch 27/41 (MJD 59635): cheapest target 1.75 km/s
+  epoch 28/41 (MJD 59736): cheapest target 1.57 km/s
+  epoch 29/41 (MJD 59836): cheapest target 2.38 km/s
+  epoch 30/41 (MJD 59937): cheapest target 2.28 km/s
+  epoch 31/41 (MJD 60037): cheapest target 3.29 km/s
+  epoch 32/41 (MJD 60137): cheapest target 3.87 km/s
+  epoch 33/41 (MJD 60238): cheapest target 1.92 km/s
+  epoch 34/41 (MJD 60338): cheapest target 1.54 km/s
+  epoch 35/41 (MJD 60439): cheapest target 2.91 km/s
+  epoch 36/41 (MJD 60539): cheapest target 4.00 km/s
+  epoch 37/41 (MJD 60640): cheapest target 2.52 km/s
+  epoch 38/41 (MJD 60740): cheapest target 3.00 km/s
+  epoch 39/41 (MJD 60841): cheapest target 3.53 km/s
+  epoch 40/41 (MJD 60941): cheapest target 2.36 km/s
+  epoch 41/41 (MJD 61042): cheapest target 3.19 km/s
+
+--- acceptance: v_inf = 0, epoch = launch_interval[0], 600-day window ---
+budget                 : 5.080 km/s
+cheapest target        : 3.498 km/s
+reachable, margin 1.0x : 2   (recorded value: 2)
+reachable, margin 1.5x : 0   (recorded value: 0)
+PASS: recorded baseline reproduced
+
+--- reachable-asteroid count at a 1.5x margin (1436-asteroid catalogue) ---
+window    |v_inf|    min  median    max   best epoch (MJD)
+600 d         0 k      0       1      4              58128
+600 d         1 k      1       2      7              58128
+600 d         2 k      2       5      8              58128
+600 d         3 k      3       8     12              58128
+600 d         4 k      6      11     16              58028
+5 yr          0 k     32      41     51              57827
+5 yr          1 k     33      48     58              57626
+5 yr          2 k     42      56     67              57827
+5 yr          3 k     45      66     82              58329
+5 yr          4 k     50      75     93              58329
+10 yr         0 k    100     127    151              59434
+10 yr         1 k    120     141    160              57526
+10 yr         2 k    129     155    178              59434
+10 yr         3 k    141     170    192              59434
+10 yr         4 k    159     182    208              58430
+
+saved .../figures/legality_reachability_scan.png
+saved .../results/legality_reachability_scan.csv
+```
+
+### Numbers
+
+The scan sweeps 41 launch epochs across the full 4018-day legal window, `|v_inf|` in
+{0, 1, 2, 3, 4} km/s, and mission windows of 600 d / 5 yr / 10 yr, at a 1.5x delta-v margin.
+
+| configuration | reachable asteroids |
+|---|---|
+| pinned: 600 d, `v_inf` = 0, epoch = `launch_interval[0]` (curriculum's actual setting) | **0** (2 at a 1.0x margin) |
+| 600 d, `v_inf` = 0, best epoch | 4 |
+| 600 d, `v_inf` = 4 km/s, best epoch | 16 |
+| 5 yr, `v_inf` = 0, best epoch | 51 |
+| 5 yr, `v_inf` = 4 km/s, best epoch | 93 |
+| 10 yr, `v_inf` = 0, worst / median / best epoch | 100 / 127 / 151 |
+| 10 yr, `v_inf` = 4 km/s, worst / median / best epoch | 159 / 182 / **208** |
+
+Cheapest single target across the catalogue, by launch epoch: 1.06 km/s (MJD 58430) at the best
+epoch sampled, 4.21 km/s (MJD 57425) at the worst — a factor of 4.0 spread driven purely by
+phasing. At the pinned `START_EPOCH` it is 3.50 km/s, in the worst quartile of the window.
+
+Figure: `figures/legality_reachability_scan.png`. Left panel, count vs launch epoch at the 10-year
+window, one line per `v_inf`, with the pinned `START_EPOCH` marked. Right panel, count vs `v_inf`,
+one solid line per window at its best epoch and a dashed line at the median epoch.
+
+### Interpretation
+
+**Halt condition 3 does not apply; the candidate set is emphatically not empty.** Going from the
+curriculum's pinned configuration (600 d, `v_inf` = 0, `launch_interval[0]`) to the best legal
+configuration (10 yr, `v_inf` = 4 km/s, MJD 58430) takes the reachable count from 0 to 208 at the
+same 1.5x margin. Phase 4's sequencing layer has a large candidate set to work with. That is the
+result this phase existed to establish.
+
+**The three pinned quantities are not equally valuable, and they are not what one would guess.**
+Ranked by what each buys at the 1.5x margin:
+
+1. *Mission window* is worth by far the most: 600 d -> 10 yr at fixed `v_inf` = 0 takes the median
+   epoch from 1 to 127 asteroids, a factor of ~127. This is unsurprising in hindsight — the
+   delta-v budget itself rises 5.08 -> 32.32 km/s (Phase 1b), and the requirement distribution has
+   a long tail that the extra 27 km/s cuts deep into.
+2. *Launch epoch* is worth a factor of ~1.5 at any fixed window and `v_inf` (10 yr, `v_inf` = 0:
+   100 at the worst epoch, 151 at the best), and much more at short windows (600 d, `v_inf` = 0:
+   0 at the worst, 4 at the best — the difference between an empty candidate set and a non-empty
+   one). The pinned `START_EPOCH` sits at 126 on the 10-year curve, essentially the median, so it
+   is not a pathological choice — it is simply an arbitrary one, and arbitrary is expensive at
+   short windows where it happens to be near-worst (cheapest target 3.50 km/s against a 5.08 km/s
+   budget, i.e. margin 1.45x, just under the 1.5x bar; hence the recorded 0).
+3. *`v_inf`* is worth ~1.4x at the 10-year window (151 -> 208 at the best epoch) and ~4x at 600
+   days (4 -> 16). It matters most exactly where the budget is tightest, which is what one would
+   expect from a fixed 4 km/s credit against a budget that ranges from 5 to 32 km/s.
+
+The practical reading for Phase 4: **take the 10-year window first, then choose the launch epoch,
+then take the `v_inf` for free.** The reachable-count curve against launch epoch is strongly
+non-monotone with a ~200-day quasi-period (visible in the left panel) — that is the synodic
+structure of the near-Earth population, and it means epoch selection should be a search, not a
+default.
+
+**The `launch_interval` upper bound was wrong.** `constants.launch_interval` was
+`[DateTime(2015,1,1), DateTime(2025,1,1)]` = 3653 days, but the legal window is MJD 57023-61041 =
+4018 days, i.e. 2015-01-01 through the *end* of 2025. 365 days — 10% of the legal window, and the
+half containing three of the five best epochs in the scan — were being discarded. Corrected to
+`DateTime(2026,1,1)`. This supplements the Phase 1c transcription audit, which only compared the
+Earth ephemeris block; it was found while working out how wide the epoch sweep should be.
+
+A related but harmless detail: tudatpy's `DateTime(y, m, d)` resolves to 12:00, not 00:00
+(`DateTime(2015,1,1).to_modified_julian_day()` returns 57023.5). So `launch_interval` is really
+MJD 57023.5-61041.5 — half a day inside the stated window at each end. That is conservative and
+therefore legal, so it is documented rather than fixed; forcing it to exactly MJD 57023.0 would
+require bypassing the `DateTime` helper for no legality gain.
+
+**What this scan is and is not.** It is a closed-form screen — the energy term from the semi-major
+axis difference plus a phasing term `v_circ * delta_theta`, compared against a continuous-full-
+thrust delta-v budget. It says nothing about whether any *particular* transfer closes, and in
+particular it ignores inclination entirely, which for a population with `i` up to 68 deg is a real
+omission that will make it optimistic. Its purpose here is to answer one question — is the
+candidate set empty at the pinned settings and non-empty at legal ones — and the answer is yes and
+no respectively. Phase 4's Lambert-based oracle replaces it with something that actually solves the
+transfer.
+
+### Choices taken where the brief left it open
+
+- **How `v_inf` enters `_delta_v_needed`**: credited one-for-one against the requirement, floored
+  at zero (`max(0, dv_energy + dv_phasing - v_inf)`). Rationale: the estimator is already a sum of
+  two scalar contributions with no vector structure, and the launch excess is a free impulse of
+  arbitrary direction, so there is nothing in the model that could distinguish a well-pointed
+  4 km/s from a badly-pointed one. Rejected alternative: add the `v_inf` vector to Earth's velocity,
+  take the osculating semi-major axis of the resulting departure orbit, and recompute the energy
+  term from that while leaving the phasing term alone. That is more faithful, but it makes the
+  result depend on a `v_inf` *direction* that would then have to be optimised per target per epoch,
+  turning a screen into a small optimisation problem — disproportionate for a filter whose job is
+  to decide whether a set is empty. The simple version is optimistic in the same direction for
+  every candidate, so the ranking it produces is what Phase 4 consumes, and Phase 4 re-checks every
+  leg with Lambert anyway.
+- **Grid resolution**: 41 epochs (~100-day spacing) over 4018 days, 5 `v_inf` values. The epoch
+  curve has ~200-day structure, so 100-day spacing resolves it but does not pin the optimum
+  precisely; Phase 4 can refine locally. Rejected: a finer sweep, which costs linearly (the scan is
+  1436 asteroids x 41 epochs of scalar `_delta_v_needed` calls, ~40 s) and was not needed to answer
+  the empty-or-not question.
+- **`START_EPOCH` left pointing at `launch_interval[0]`.** Rejected alternative: repoint it at the
+  best epoch found here. Not taken because every recorded curriculum result in `src/curriculum.py`
+  was measured at the current value, and silently moving it would invalidate all of them. Phase 4's
+  sequencer passes its chosen epoch explicitly instead.
