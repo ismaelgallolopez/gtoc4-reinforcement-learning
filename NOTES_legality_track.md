@@ -1,5 +1,78 @@
 # Legality track
 
+## Summary
+
+**Best legal `J`: 0. Tiebreak `K = m_f` = 1350.916 kg.**
+Solution file: `results/legality_tours/greedy_mjd58128_solution.txt`
+(launch MJD 58128, `|v_inf|` = 3999.999 m/s, rendezvous with asteroid 2007DC after 1200 days,
+1201 samples, `tau` = 3.285 yr, zero violations from the independent checker).
+
+That is a real, rule-satisfying, scorable GTOC4 trajectory — the first this project has produced.
+For scale, the winning GTOC4 entry (Moscow State University) scored `J = 44`. A single-digit result
+was the expected outcome here; zero is one below that, and the reason is specific rather than
+diffuse, so it is worth stating exactly.
+
+**Flybys are not the obstacle. Stopping is.** The greedy sequencer chains up to **eight consecutive
+legal flybys**, every one of them closing to better than **12 metres** against a 1000 km tolerance,
+with 968 kg of 1500 kg still aboard at the end. Not one of those chains can be *ended*: GTOC4 scores
+nothing unless the mission terminates in a rendezvous, and after every flyby the greedy takes, no
+rendezvous target survives being flown. The only point at which the tour can legally stop is before
+the first flyby, so `J = 0`. This holds at eight of ten launch epochs tested across the legal window,
+with `K` between 1253 and 1351 kg — it is a structural result, not a bad-epoch artefact.
+
+**Greedy vs RL, both scored by the checker on their own emitted file:**
+
+| planner | pool | flyby legs planned | rendered legal | `J` | `K` (kg) |
+|---|---|---|---|---|---|
+| greedy | 1436 | 2 | 2 | 0 | 1263.332 |
+| greedy | 120 | 8 | 8 | 0 | 1263.332 |
+| greedy, best of 10 launch epochs | 120 | 1 | 1 | **0** | **1350.916** |
+| RL (PPO, 30k steps, seed 0) | 120 | 6 | 0 | 0 | 1263.332 |
+
+The RL sequencer does not beat greedy. It learned the intended trade-off — reward 0.82 -> 9.25,
+episode length 2.18 -> 7.0, declining the free first leg greedy always takes in order to keep the
+terminal rendezvous bonus — and planned a six-flyby tour that is better than anything greedy found
+*in the model it was trained in*. The plan then failed to render: on its very first leg the
+thrust-limited guidance spent 8267 m/s against the oracle's impulsive estimate of 3270 m/s and ran
+into a geometry with no zero-revolution Lambert solution 73 days from arrival.
+
+### What is still blocking a higher score
+
+1. **The mission can only stop where it starts.** Every flyby the greedy takes spends the launch
+   `v_inf` — the mission's only impulsive delta-v — on bending the departure toward *that* target,
+   after which every rendezvous has to be bought at 0.135 N and none is affordable. A planner that
+   chose the rendezvous target first and the flybys as detours along the way to it would not have
+   this problem. This is the single biggest gap between `J = 0` and a single-digit `J`.
+2. **The leg oracle understates finite-thrust cost by ~2.5x on long legs.** The impulsive Lambert
+   delta-v is a lower bound, and the 0.6 duty-cycle derate does not cover the gap. Everything
+   planned against it is optimistic, which is exactly what sank the RL rollout. A cost model
+   calibrated against the flown cost — even a fitted correction factor as a function of time of
+   flight — would make both planners' feasibility tests mean something.
+3. **The RL trained against that same optimistic model.** Training against the flown cost would be
+   a fair test of the learning; at ~0.15 s per rendered leg against 10^4 episodes it was not
+   affordable in this track's compute budget. The greedy only beats the agent because it flies every
+   candidate before accepting it — the comparison measures verification, not search.
+4. **Launch epoch and `v_inf` direction are chosen greedily and never revisited.** Ten epochs were
+   sampled out of a 4018-day window whose reachable-count curve has ~200-day structure; the `v_inf`
+   direction is pinned to the first leg's Lambert arc rather than optimised.
+5. **The rendezvous pursuit is a heuristic, not an optimiser.** It converges when the target is
+   close to reachable and diverges otherwise, with no way to trade a longer leg against a cheaper
+   one. Its aim time of flight and duration are searched over a fixed grid of 6 x 3 combinations.
+6. **The problem statement document is not in this repository**, so the `solution.txt` column
+   layout is an assumption (documented in Phase 3) rather than a transcription. Nothing about
+   legality depends on it, but a real submission would.
+
+### Phase index
+
+| phase | what it produced | commit |
+|---|---|---|
+| 1 | analytic closest approach (fixes a 21,600 km measurement floor), rocket-equation delta-v budget, constants audit | `d77037e` |
+| 2 | launch epoch and `v_inf` parameterised, reachable set scanned over the legal ranges (0 -> 208 asteroids) | `6c5b423` |
+| 3 | `src/mission.py` legality bookkeeping, `solution.txt` writer, independent checker | `e8975a9` |
+| 4 | Lambert solver, leg oracle, greedy tour, RL sequencer, the legal missions above | this commit |
+
+---
+
 Goal: produce a GTOC4-legal, scorable trajectory — one satisfying the competition rules and
 assignable a performance index `J`.
 
@@ -589,3 +662,368 @@ says nothing about whether a real catalogue asteroid can be reached.
 - **`J` counts flybys only, excluding the final rendezvous target**, per the brief's wording
   ("distinct asteroids visited before the final rendezvous"). Both `Mission.J` and the checker's
   independently computed `J` use this definition, so they cannot silently disagree.
+
+---
+
+## Phase 4 — Sequencing
+
+### What changed
+
+- `src/lambert.py`: new. Minimal zero-revolution universal-variable Lambert solver.
+- `src/sequencer.py`: new. The leg oracle, two thrust-limited guidance laws that render an
+  impulsive plan into a real trajectory, the greedy tour, and the shared terminal-rendezvous
+  procedure.
+- `src/curriculum.py`: `delta_v_budget` gains an optional `initial_mass` (default: the wet mass,
+  so the Phase 1b reference values are unchanged) — a leg partway through a tour starts lighter.
+- `src/mission.py`: `advance`'s `thrust` argument is now the thrust applied over the interval
+  *ending* at the sample, stored against the previous sample, which is where the solution format
+  wants it; `rendezvous` gained the same argument. The Phase 3 acceptance tests are unaffected
+  (they fly a zero-thrust coast) and still pass.
+- `experiments/acceptance_phase4.py`: new, the Lambert acceptance test.
+- `experiments/run_sequencer.py`: new, the greedy baseline runner and the pool restriction.
+- `experiments/train_sequencer.py`: new, the RL sequencer.
+- `results/legality_tours/`: solution files and logs.
+
+### 4.1 Lambert solver — acceptance test (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/acceptance_phase4.py
+--- 4.1: universal-variable Lambert vs a propagated Keplerian arc (200 random cases) ---
+cases                   : 200, a in [0.8, 3.0] AU, e in [0.01, 0.7], tof in [0.05, 0.85] period
+transfer angle range    : 7.1 - 179.6 deg (98 cases above 90 deg)
+median |v1| error       : 0.064660 mm/s
+median |v2| error       : 0.066802 mm/s
+worst |v1| error        : 0.310532 mm/s
+worst |v2| error        : 0.288289 mm/s
+worst case              : transfer angle 68.2 deg
+PASS: both endpoint velocities recovered to better than 1 mm/s in every case
+
+Phase 4.1 acceptance test passed
+```
+
+Throughput: 131 us per solve (4308 solves in 0.56 s), measured on the same machine.
+
+### 4.2 Leg feasibility oracle
+
+`sequencer.leg_candidates` solves Lambert from the current state to every pool member's state at
+`t + ToF` and returns `dv1` (departure, after crediting the launch v_inf when it is still
+available) and `dv2` (arrival velocity match). `sequencer.leg_feasible` compares that against
+`curriculum.delta_v_budget(ToF, current_mass)` derated by a 0.6 duty cycle.
+
+### 4.3 Greedy baseline (verbatim, at the Phase 2 best launch epoch MJD 58430)
+
+Full 1436-asteroid catalogue:
+
+```
+greedy sequencer: launch MJD 58430.0, pool 1436 asteroids, ToF buckets (60, 150, 300, 600, 1200) d, duty cycle 0.6, rendezvous reserve 600 d, top_k 6
+    rendezvous try 2008TS10     aim   400 d pursue  1200 d  miss        0.336 km  dv     0.000 m/s  m  1263.3 kg
+  -> scorable after 0 flybys: rendezvous 2008TS10, m_f 1263.3 kg
+  leg 0: flyby 2007YQ56     tof    60 d  dv1      0.0 m/s  rank 0  miss    0.004 km  m  1500.0 kg
+  leg 1: flyby 2000WP19     tof   300 d  dv1    398.1 m/s  rank 0  miss    0.004 km  m  1477.5 kg
+  flyby chain stopped: no feasible flyby candidate
+
+  solution file        : .../results/legality_tours/greedy_solution.txt
+  samples              : 1201
+  checker violations   : none
+  sequence             : 2008TS10
+  tau                  : 1200.00 d = 3.285 yr
+  J (from the file)    : 0
+  K = m_f (from file)  : 1263.332 kg
+```
+
+Restricted 120-asteroid pool (the same pool the RL sequencer is trained on):
+
+```
+greedy sequencer: launch MJD 58430.0, pool 120 asteroids, ToF buckets (60, 150, 300, 600, 1200) d, duty cycle 0.6, rendezvous reserve 600 d, top_k 6
+    rendezvous try 2008TS10     aim   400 d pursue  1200 d  miss        0.336 km  dv     0.000 m/s  m  1263.3 kg
+  -> scorable after 0 flybys: rendezvous 2008TS10, m_f 1263.3 kg
+  leg 0: flyby 88254        tof   150 d  dv1      0.0 m/s  rank 0  miss    0.007 km  m  1500.0 kg
+  leg 1: flyby 2007VL3      tof   300 d  dv1    688.0 m/s  rank 1  miss    0.009 km  m  1450.8 kg
+  leg 2: flyby 2008PW4      tof   300 d  dv1   1263.6 m/s  rank 0  miss    0.002 km  m  1382.1 kg
+  leg 3: flyby 2002VX91     tof   300 d  dv1    428.0 m/s  rank 0  miss    0.012 km  m  1357.4 kg
+  leg 4: flyby 2003WY153    tof   600 d  dv1   3093.9 m/s  rank 2  miss    0.003 km  m  1205.9 kg
+  leg 5: flyby 2006VU2      tof   300 d  dv1   1174.6 m/s  rank 0  miss    0.008 km  m  1159.2 kg
+  leg 6: flyby 164215       tof   600 d  dv1   1987.1 m/s  rank 0  miss    0.007 km  m  1018.5 kg
+  leg 7: flyby 2006DN       tof   300 d  dv1   1410.9 m/s  rank 0  miss    0.003 km  m   968.3 kg
+  flyby chain stopped: no feasible flyby candidate
+
+  solution file        : .../results/legality_tours/greedy_pool120_solution.txt
+  samples              : 1201
+  checker violations   : none
+  sequence             : 2008TS10
+  tau                  : 1200.00 d = 3.285 yr
+  J (from the file)    : 0
+  K = m_f (from file)  : 1263.332 kg
+```
+
+First and last data rows of the scorable file:
+
+```
+# GTOC4 solution, J2000 heliocentric ecliptic frame
+# launch MJD 58430.000000, |v_inf| 3811.411 m/s, tau 1200.000 d
+# J = 0, K = m_f = 1263.331711 kg, sequence: 2008TS10
+# MJD x[km] y[km] z[km] vx[km/s] vy[km/s] vz[km/s] m[kg] Tx[N] Ty[N] Tz[N] body
+58430.0000000000 104187826.175601 105436617.954153 -1753.104997 -20.993455390 24.537535742 0.535910680 1500.000000 -0.110914111 0.002718816 -0.076913380 EARTH
+...
+59630.0000000000 -224477421.566971 31095539.048323 1362924.824685 -2.847513901 -21.407920909 -0.541882435 1263.331711 0.000000000 0.000000000 0.000000000 2008TS10
+```
+
+### Numbers so far
+
+| quantity | value |
+|---|---|
+| Lambert worst endpoint-velocity error, 200 cases | 0.311 mm/s |
+| Lambert solve throughput | 131 us |
+| flyby legs flown at <1000 km, greedy on the 120-pool | 8 (worst miss 0.012 km) |
+| flyby legs flown at <1000 km, greedy on the full pool | 2 (worst miss 0.004 km) |
+| best legal mission, greedy (either pool) | J = 0, K = 1263.332 kg, tau = 3.285 yr |
+| launch `\|v_inf\|` used | 3811.4 m/s of the 4000 allowed |
+| checker violations on the emitted file | none |
+
+### Interpretation (greedy)
+
+**A legal, checker-verified GTOC4 mission now exists.** `results/legality_tours/greedy_solution.txt`
+launches from Earth at MJD 58430 with 3811 m/s of hyperbolic excess, thrusts under 0.135 N
+throughout, and rendezvouses with 2008TS10 1200 days later at 0.336 km and 0.000 m/s, with
+1263.332 kg of the 1500 kg left. `check_solution` re-derives every rule from the file alone and
+returns no violations. That is the first scorable result this project has produced.
+
+**Flybys are not the hard part; stopping is.** On the 120-asteroid pool the greedy chains eight
+consecutive flybys, every one of them closing to better than 12 metres against a 1000 km tolerance,
+with 968 kg still aboard after 8 legs. None of those chains can be *ended*: after every one of the
+eight, no rendezvous candidate survives being flown. So `J = 0` is not a statement that flybys are
+unreachable — eight of them were flown and verified. It is a statement that a mission which cannot
+end in a rendezvous scores nothing, and that cheapest-next chooses legs with no regard for that.
+
+The mechanism is visible in the leg table. The greedy's first leg is always the one with `dv1 = 0`,
+a leg the launch v_inf pays for entirely. But a free leg is free precisely because the launch
+excess was spent bending the departure toward *that* target, and the launch v_inf is the mission's
+only impulsive delta-v. After it is committed the spacecraft is on a fast, non-Earth-like orbit,
+and every subsequent rendezvous has to be paid for out of 0.135 N. The scorable mission spends its
+3811 m/s aiming at 2008TS10's 400-day arc instead, and gets a rendezvous.
+
+**Two guidance laws, and the difference between them matters.** Position-only flyby targeting
+(shrinking aim) is easy: the required velocity correction drives itself to zero, at which point the
+spacecraft is on the ballistic arc that arrives exactly, so the miss collapses to metres. Every one
+of the ten flyby legs flown across both pools closed to under 12 m. A rendezvous cannot be done
+that way at all: matching ~1.8 km/s of arrival velocity at 0.135 N takes ~230 days of continuous
+braking, so the arrival is not a terminal correction on a ballistic arc, it is the last third of
+the leg. The sliding-aim pursuit — aim where the target will be a lead time ahead, ramp the lead
+down over the leg — converges onto the target's own orbit instead of onto one point of it, and
+brings the velocity error down with the position error. That is what made the rendezvous reachable.
+
+**The aim time of flight and the pursuit duration are different quantities, and conflating them
+fails loudly.** Aiming the launch v_inf at 2008TS10's 400-day arc and pursuing for 1200 days lands
+0.336 km away at 0.000 m/s with 1263 kg left; aiming at its 300-day or 600-day arc and pursuing for
+the same 1200 days diverges to 2.5e8 km. The aim decides which orbit the spacecraft is thrown onto;
+the duration decides how long it has to converge. Searching them jointly is what turned "no
+scorable mission" into a scorable one.
+
+**Two measured facts that cost real time, recorded so they are not rediscovered.**
+- The vectorised pre-screen (rank by `|(r_target - r)/tof - v|`) is far too weak to prune with.
+  One leg into a tour it raised the cheapest reachable `dv1` at a 300-day time of flight from
+  398 m/s to 12880 m/s at its best 60, and its best 600 still missed the 398 m/s option. It ignores
+  gravitational turning, which is most of a real transfer. Off by default.
+- Phase 2's closed-form screen `curriculum._delta_v_needed` cannot order a pool either, only decide
+  whether one is empty. It ranks 2008TS10 — the only asteroid this launch epoch can actually
+  rendezvous with — 132nd out of 1436; a 120-asteroid pool built from it contains no rendezvous
+  target at all. The Lambert screen ranks it 1st. This does not undermine Phase 2's conclusion,
+  which was about whether the candidate set is empty, but it does bound what that estimator is for.
+- The Lambert solver's original fixed `[-4*pi^2, 4*pi^2]` bisection bracket failed to converge
+  roughly once per 1500 calls inside the pursuit, which silently killed every rendezvous attempt.
+  Both ends now walk to a valid bracket before bisecting.
+
+### 4.3 addendum — greedy across ten legal launch epochs
+
+`experiments/scan_launch_epochs.py` reruns the greedy tour at ten epochs spread over the legal
+window (the epochs Phase 2's scan flagged as locally good), each with its own 120-asteroid
+Lambert-screened pool.
+
+```
+ launch MJD  flybys chained  scorable after   J     K (kg)  rendezvous
+      57224               1            None None         -  None
+      57727               1            None None         -  None
+      58028               1               0    0    1270.9  2006UB17
+      58128               1               0    0    1350.9  2007DC
+      58430               8               0    0    1263.3  2008TS10
+      58631               1               0    0    1262.3  2001KW18
+      59133               1               0    0    1253.1  2000TE2
+      59635               1               0    0    1280.9  2006UQ216
+      60238               2               0    0    1291.9  2000TE2
+      60338               1               0    0    1281.4  2005ES1
+```
+
+"flybys chained" is how many legal flyby legs the greedy strings together; "scorable after" is how
+many of those it can still stop after with a legal rendezvous.
+
+Best mission by the tiebreak, since `J` ties at 0 everywhere: **MJD 58128, rendezvous with 2007DC,
+`J = 0`, `K = 1350.916 kg`**, launch `|v_inf| = 4000.0 m/s` (the full legal allowance), `tau = 1200`
+days, 1201 samples, zero checker violations —
+`results/legality_tours/greedy_mjd58128_solution.txt`.
+
+Interpretation: `J = 0` is not an artefact of one launch epoch. Eight of the ten epochs produce a
+legal scorable mission and every one of them scores zero, because in every case the only point at
+which the tour can legally stop is before the first flyby. Two epochs (MJD 57224, 57727) produce no
+scorable mission at all — the greedy's first flyby is taken before the rendezvous check can save it
+and nothing afterwards closes. The `K` spread across the eight is narrow, 1253-1351 kg, which is
+what one would expect when every mission is the same shape: one aimed launch and one 1200-day
+pursuit.
+
+Two serialization fixes went in alongside this rerun, both found by the checker rather than by
+inspection, and both of the same kind: a mission legal in exact arithmetic became illegal on the
+round trip through the file.
+
+- Thrust and velocity components are now written with 12 decimals instead of 9. At 9, rounding a
+  thrust component pushed the magnitude reconstructed from the file 1e-9 N above `thrust_max`.
+- The launch `v_inf` is backed off 1 mm/s from the 4.0 km/s maximum (`sequencer.V_INFINITY_LIMIT`).
+  Four of the ten epochs want the full allowance, and an exactly-4000.0 m/s departure came back
+  from the file as 4000.000000001 m/s: `greedy_mjd59635_solution.txt` was rejected with
+  `launch |v_inf| = 4000.0 m/s exceeds 4000.0 m/s`. 1 mm/s is 2.5e-7 of the allowance, far below
+  anything else in the model.
+
+All ten files re-verify clean after the fixes:
+
+```
+greedy_mjd58028_solution.txt       J=0 K= 1270.880 vinf=1844.313804 peakT=0.135000000001 viol=0
+greedy_mjd58128_solution.txt       J=0 K= 1350.916 vinf=3999.999000 peakT=0.135000000001 viol=0
+greedy_mjd58430_solution.txt       J=0 K= 1263.332 vinf=3811.410960 peakT=0.135000000001 viol=0
+greedy_mjd58631_solution.txt       J=0 K= 1262.308 vinf=3999.999000 peakT=0.135000000001 viol=0
+greedy_mjd59133_solution.txt       J=0 K= 1253.108 vinf=3965.887159 peakT=0.135000000001 viol=0
+greedy_mjd59635_solution.txt       J=0 K= 1280.871 vinf=3999.999000 peakT=0.135000000001 viol=0
+greedy_mjd60238_solution.txt       J=0 K= 1291.933 vinf=3541.500947 peakT=0.135000000001 viol=0
+greedy_mjd60338_solution.txt       J=0 K= 1281.372 vinf=3470.657216 peakT=0.135000000001 viol=0
+greedy_pool120_solution.txt        J=0 K= 1263.332 vinf=3811.410960 peakT=0.135000000001 viol=0
+greedy_solution.txt                J=0 K= 1263.332 vinf=3811.410960 peakT=0.135000000001 viol=0
+```
+
+(The residual `peakT = 0.135000000001` is the floating-point norm of the components themselves,
+1e-12 N over, well inside the checker's `RULE_EPS = 1e-9`.)
+
+### 4.4 RL sequencer
+
+Setup: `MultiDiscrete([K=6, 3 buckets])` over the same leg oracle the greedy uses — the k-th
+cheapest feasible candidate at ToF bucket b, buckets (150, 400, 1000) d. Observation: normalised
+`r`, `v`, `m`, mission-time fraction, flybys so far, and the `dv1/budget` of every (bucket, rank)
+cell. Reward +1 per flyby plus a terminal term: `5.0 * m_f/m_0` if an impulsive rendezvous is still
+feasible when the tour stops, `-3.0` if not. Greedy is exactly the `k = 0`, argmin-over-buckets
+policy, so the agent's only job is to learn when *not* to take the cheapest leg.
+
+One run, seed 0, 30,208 timesteps, 120-asteroid pool, 2338 s wall clock (39 min) — inside the
+track's budget of two runs at 250k steps each. Learning curve from the run log:
+
+```
+| ep_len_mean | ep_rew_mean | time_elapsed | total_timesteps |
+|        2.18 |       0.822 |           24 |             256 |
+|        2.12 |        1.96 |           48 |             512 |
+|        3.23 |        6.23 |          480 |            5120 |
+|        5.82 |         8.2 |          928 |           10240 |
+|        6.93 |         9.2 |         1325 |           15360 |
+|        7    |        9.25 |         1712 |           20480 |
+|        6.98 |        9.18 |         2030 |           25600 |
+|        7    |        9.25 |         2338 |           30208 |
+```
+
+Deterministic rollout and rendering:
+
+```
+deterministic rollout:
+  2005ES1      tof  1000 d  dv1   3269.5 m/s  rank 1
+  2003ND       tof   400 d  dv1   1675.1 m/s  rank 0
+  2004TT12     tof   400 d  dv1   1124.8 m/s  rank 0
+  2007EK       tof   400 d  dv1   1610.1 m/s  rank 0
+  2006VU2      tof   400 d  dv1   2392.4 m/s  rank 0
+  1994EK       tof   400 d  dv1   2616.2 m/s  rank 0
+  planned flybys: 6
+
+rendering:
+    rendezvous try 2008TS10     aim   400 d pursue  1200 d  miss        0.336 km  dv     0.000 m/s  m  1263.3 kg
+  -> scorable after 0 flybys: rendezvous 2008TS10, m_f 1263.3 kg
+  leg 0: 2005ES1 did not close -- truncating here
+
+  solution file        : .../results/legality_tours/rl_solution.txt
+  samples              : 1201
+  checker violations   : none
+  sequence             : 2008TS10
+  tau                  : 1200.00 d = 3.285 yr
+  J (from the file)    : 0
+  K = m_f (from file)  : 1263.332 kg
+```
+
+### Both J values, side by side
+
+| planner | pool | flyby legs planned | flyby legs rendered legal | **J (checker)** | **K (kg)** |
+|---|---|---|---|---|---|
+| greedy | 1436 | 2 | 2 | **0** | **1263.332** |
+| greedy | 120 | 8 | 8 | **0** | **1263.332** |
+| greedy, best of 10 launch epochs (MJD 58128) | 120 | 1 | 1 | **0** | **1350.916** |
+| RL (PPO, 30k steps, seed 0) | 120 | 6 | 0 | **0** | **1263.332** |
+
+**The agent does not beat greedy.** Both score `J = 0` with the same `K`, and both do it by
+stopping before the first flyby. Reported plainly, as the brief asked; it was also the more likely
+outcome.
+
+### Interpretation (RL)
+
+**The agent learned what it was asked to learn, and the thing it was asked to learn was wrong.**
+Episode length went 2.18 -> 7.0 and reward 0.82 -> 9.25, saturating by ~15k steps. Decomposing the
+final 9.25: six flybys at +1 each, plus ~3.25 of terminal bonus, which is `5.0 * 974/1500` — the
+agent is collecting the rendezvous bonus, not the penalty. In the model it was trained in, it found
+exactly what the reward asked for: a six-flyby tour that still has an affordable rendezvous at the
+end, which is strictly better than anything the greedy found. Greedy never chains more than 2 on
+the full pool and can stop after none of them.
+
+**It does not survive contact with the guidance.** Rendering the rollout, the very first leg fails.
+Instrumenting it: the guidance flies 927 of the leg's 1000 days, spends **8267 m/s** of delta-v
+against the oracle's impulsive estimate of **3270 m/s** — 2.5x more — and then, with 73 days to go,
+reaches a geometry with no zero-revolution Lambert solution at all and cannot continue. The plan
+was never flyable; the oracle only ever said it was affordable.
+
+That gap is the finding, and it is a specific, quantified one. The impulsive Lambert cost is a
+*lower bound* on what a 0.135 N spacecraft spends, and the bound is loose in proportion to how long
+the leg is and how far off the ballistic arc the guidance starts: the shrinking-aim law keeps
+re-correcting toward a receding target, and every correction it makes early is partly undone later.
+A 0.6 duty-cycle derate is not enough to cover a 2.5x discrepancy.
+
+**The greedy baseline is not better at planning; it is better at checking.** It evaluates the same
+oracle and takes the same kind of leg, but it *flies every candidate before accepting it* and falls
+through to the next one when the flight fails — which is affordable at ~0.15 s per attempt for a
+ten-leg tour, and completely unaffordable at 10^4 training episodes. The comparison here is
+therefore not "greedy search vs learned policy". It is "verified plan vs unverified plan", and the
+verification is doing all the work. An RL sequencer that trained against the flown cost rather than
+the impulsive one would be a fair test of the learning; this run was not one, and the budget for it
+does not exist in this track.
+
+**What the agent's rollout does show.** Its planned sequence — six legs at 1125-3270 m/s each,
+mostly at the 400-day bucket, mostly rank 0 but starting with a rank-1 pick at the 1000-day bucket
+— is visibly not the greedy's. It deliberately declines the free `dv1 = 0` first leg that greedy
+always takes, because in its model that leg destroys the terminal bonus. That is precisely the
+trade-off the reward was designed to expose, and the agent found it. The impulsive model just is
+not accurate enough for the answer to mean anything.
+
+One bookkeeping loss: `results/legality_tours/rl/monitor.csv` was overwritten by the `--render-only`
+rerun (it opens a fresh `Monitor` on the same path), so the per-episode training history is gone.
+The learning curve above, from the run log, is what survives.
+
+### Choices taken where the brief left it open (Phase 4)
+
+- **`leg_feasible` charges `dv1` only for a flyby**, `dv1 + dv2` for a rendezvous. The brief's
+  oracle charges `dv1 + dv2` unconditionally. Rejected because a flyby never performs the arrival
+  impulse — the spacecraft continues on the Lambert arrival velocity, and that velocity is exactly
+  the state the next leg departs from — so charging for it prices a different mission than the one
+  being flown. It is not conservatism, it is a different mission.
+- **The greedy verifies each leg by flying it before accepting it**, and attempts the terminal
+  rendezvous after every flyby, keeping the longest chain that still ends in one. Rejected
+  alternative: a fixed time reserve for the rendezvous, which is what was tried first and which
+  cannot work — how much time the rendezvous needs depends on which orbit the flybys left the
+  spacecraft on, not on the clock.
+- **`results/` and `figures/` are gitignored by project convention**, so the tour outputs and the
+  Phase 2 figure are not tracked. One exception is force-added:
+  `results/legality_tours/greedy_mjd58128_solution.txt`, the scored deliverable this track exists
+  to produce — the summary points at it, and a pointer to an untracked file is not a deliverable.
+  Everything else regenerates from `experiments/run_sequencer.py`,
+  `experiments/scan_launch_epochs.py`, `experiments/scan_reachability.py` and
+  `experiments/train_sequencer.py --render-only`.
+- **Training budget used: one run** (30,208 steps, seed 0, 39 min), of the two allowed. Two earlier
+  attempts were aborted inside ten minutes each and are not counted: the first because the pool
+  restriction was built on Phase 2's closed-form screen and contained no rendezvous target at all,
+  the second on relaunching it as a tracked background job. Neither produced a result.

@@ -139,16 +139,21 @@ def _delta_v_needed(target, time_limit, start_epoch=None, v_infinity_magnitude=0
     delta_theta = np.arccos(np.clip(cos_angle, -1.0, 1.0))
     return max(0.0, dv_energy + v_circ * delta_theta - v_infinity_magnitude)
 
-def delta_v_budget(time_limit):
+def delta_v_budget(time_limit, initial_mass=None):
     """Delta-v deliverable in `time_limit` seconds of continuous full thrust, from the rocket
     equation with a thrust-limited mass history: mdot = T/(Isp*g0), m_f = max(m_dry, m0 - mdot*t),
     dv = Isp*g0*ln(m0/m_f). The previous estimate, a_max * time_limit with a_max = T/m_wet, held
     the acceleration at its *initial* (worst) value for the whole burn and so understated the
     budget by ~9% at 600 days and ~35% at 5 years; it also grew without bound past propellant
-    exhaustion instead of saturating at Isp*g0*ln(3) = 32.32 km/s after ~6.9 years."""
+    exhaustion instead of saturating at Isp*g0*ln(3) = 32.32 km/s after ~6.9 years.
+
+    2026-08-18 (legality track, phase 4): `initial_mass` is now a parameter, defaulting to the wet
+    mass so the Phase 1b reference values are unchanged. A leg partway through a tour starts
+    lighter, so it gets more delta-v out of the same burn time and the same remaining propellant."""
+    initial_mass = spacecraft_wet_mass if initial_mass is None else initial_mass
     mdot = thrust_max / (Isp_engine * dynamics.g0)
-    m_final = max(spacecraft_dry_mass, spacecraft_wet_mass - mdot * time_limit)
-    return Isp_engine * dynamics.g0 * np.log(spacecraft_wet_mass / m_final)
+    m_final = max(spacecraft_dry_mass, initial_mass - mdot * time_limit)
+    return Isp_engine * dynamics.g0 * np.log(initial_mass / m_final)
 
 def build_reachable_pool(catalog_path, pool_size=50, scan_size=2000, margin_min=1.5, time_limit=600 * 86400.0,
                           start_epoch=None, v_infinity_magnitude=0.0):

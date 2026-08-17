@@ -132,8 +132,15 @@ class Mission:
     # -- building ------------------------------------------------------------------------------
 
     def advance(self, epoch, r, v, m, thrust=None, body='-'):
-        """Records one trajectory sample, refusing anything that breaks a rule."""
+        """Records one trajectory sample, refusing anything that breaks a rule.
+
+        `thrust` is the constant thrust applied over the interval *ending* at `epoch`, i.e. the
+        thrust that carried the spacecraft from the previous sample to this one; it is stored
+        against the previous sample, which is where the solution format wants it. The new sample's
+        own thrust is zero until the next call fills it in."""
         thrust = np.zeros(3) if thrust is None else np.asarray(thrust, dtype=np.float64)
+        if np.linalg.norm(thrust) > thrust_max + RULE_EPS:
+            raise LegalityError(f"thrust {np.linalg.norm(thrust):.4f} N exceeds the {thrust_max} N limit")
         if self.rendezvous_target is not None:
             raise LegalityError("the mission already ended with a rendezvous; cannot advance further")
         if epoch <= self.epoch - RULE_EPS:
@@ -146,12 +153,11 @@ class Mission:
             raise LegalityError(f"mass {m:.3f} kg is below the {spacecraft_dry_mass:.1f} kg dry mass")
         if m > self.m + RULE_EPS:
             raise LegalityError(f"mass increased from {self.m:.3f} to {m:.3f} kg")
-        previous_thrust = np.linalg.norm(self.samples[-1][4])
-        if previous_thrust > thrust_max + RULE_EPS:
-            raise LegalityError(f"thrust {previous_thrust:.4f} N exceeds the {thrust_max} N limit")
 
+        previous = self.samples[-1]
+        self.samples[-1] = (previous[0], previous[1], previous[2], previous[3], thrust)
         self.samples.append((float(epoch), np.asarray(r, dtype=np.float64).copy(),
-                             np.asarray(v, dtype=np.float64).copy(), float(m), thrust))
+                             np.asarray(v, dtype=np.float64).copy(), float(m), np.zeros(3)))
         self.bodies.append(body)
 
     def _check_encounter(self, name, epoch, r, v, require_velocity_match):
@@ -176,14 +182,14 @@ class Mission:
         self.advance(epoch, r, v, m, thrust, body=name)
         self.visited.append(name)
 
-    def rendezvous(self, name, epoch, r, v, m):
+    def rendezvous(self, name, epoch, r, v, m, thrust=None):
         """Records the final rendezvous with `name` and ends the mission. Refused if the position
         or velocity match fails, if `name` was previously visited, or if m_f < 500 kg."""
         self._check_encounter(name, epoch, r, v, require_velocity_match=True)
         if m < spacecraft_dry_mass - RULE_EPS:
             raise LegalityError(f"final mass {m:.3f} kg is below the "
                                 f"{spacecraft_dry_mass:.1f} kg minimum")
-        self.advance(epoch, r, v, m, None, body=name)
+        self.advance(epoch, r, v, m, thrust, body=name)
         self.visited.append(name)
         self.rendezvous_target = name
 
@@ -211,8 +217,11 @@ def write_solution(mission, path):
         for (epoch, r, v, m, thrust), body in zip(mission.samples, mission.bodies):
             f.write(f"{_mjd(epoch):.10f} "
                     f"{r[0]/KM:.6f} {r[1]/KM:.6f} {r[2]/KM:.6f} "
-                    f"{v[0]/KM:.9f} {v[1]/KM:.9f} {v[2]/KM:.9f} "
-                    f"{m:.6f} {thrust[0]:.9f} {thrust[1]:.9f} {thrust[2]:.9f} {body}\n")
+                    f"{v[0]/KM:.12f} {v[1]/KM:.12f} {v[2]/KM:.12f} "
+                    # 12 decimals on thrust, not 9: at 9 the rounding of a component can push the
+                    # reconstructed magnitude 1e-9 N above thrust_max, which is a rule violation
+                    # created purely by the file format
+                    f"{m:.6f} {thrust[0]:.12f} {thrust[1]:.12f} {thrust[2]:.12f} {body}\n")
     return path
 
 def read_solution(path):
