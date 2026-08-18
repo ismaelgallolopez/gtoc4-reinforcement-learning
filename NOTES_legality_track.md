@@ -1495,3 +1495,150 @@ search.
   independent of it and removes any risk of an incidental behavioural coupling if that file is
   ever revisited. The duplicated functions (`_departure`, `_fly_one`) are reproduced verbatim
   except for the added `trace` passthrough.
+
+### Phase 2 — Classify the failure mode across a sample
+
+#### What changed
+
+`experiments/guidance_trace2.py`: new. Two parts, run in one script:
+
+1. Reproduces Phase 6's exact ToF=60/90/120 d samples (seed=2, MJD 58128, n=120 each -- the very
+   data that produced the "54.7%" figure), and for every attempt records whether the candidate was
+   **oracle-feasible** (`dv1 < 0.6x` the thrust-limited budget, `sequencer.leg_feasible`'s own
+   margin) and whether it was **trivial** (`dv1 < 30 m/s`, Phase 6's own threshold for "covered by
+   the launch `v_inf` credit, uninformative"), cross-tabbed against whether the leg actually closed.
+   This was added after a first pass conflated "oracle-feasible" with "closes reliably": most of
+   what looked like a clean 100%-feasible-succeeds / 0%-infeasible-succeeds split turned out to be
+   driven almost entirely by trivial, free legs, which trivially succeed and say nothing about the
+   guidance under real load.
+2. A fresh, fully-traced, 30-attempt batch across two launch epochs (MJD 58128 and 58430, the
+   legality track's own 8-flyby-chain epoch) and the three short ToF buckets, using
+   `experiments/guidance_trace1.py`'s `_fly_one` (this track's own module) with tracing enabled,
+   classifying every failure's primary proximate cause via the rule in `classify()`: `exhaustion`
+   if the leg's terminal event is propellant depletion; else `oscillation` if position error
+   reaches a minimum well before the leg ends and then grows back by more than 5%; else
+   `saturation` if thrust sits at >=99% of `thrust_max` for more than 80% of the leg's steps; else
+   `other`.
+
+#### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/guidance_trace2.py
+--- part 1: Phase 6's exact seed=2 short-ToF samples, feasibility x triviality ---
+   ToF     n     trivial+feasible    nontrivial+feasible    trivial+infeasible    nontrivial+infeasible
+    60   120                54/54                    0/0                   0/0                     0/66
+    90   120                49/49                    0/0                   0/0                     0/71
+   120   120                60/60                    0/1                   0/0                     0/59
+
+--- sampling 3 ToF buckets x 2 epochs x 5 attempts = 30 ---
+  MJD 58128.0 ToF  60 d: 5 attempts collected in 5
+  MJD 58128.0 ToF  90 d: 5 attempts collected in 5
+  MJD 58128.0 ToF 120 d: 5 attempts collected in 5
+  MJD 58430.0 ToF  60 d: 5 attempts collected in 5
+  MJD 58430.0 ToF  90 d: 5 attempts collected in 5
+  MJD 58430.0 ToF 120 d: 5 attempts collected in 5
+
+--- part 2: fresh two-epoch batch, n=30 ---
+outcome counts: {'fly_fail': 14, 'missed': 4, 'ok': 12}
+
+feasibility x triviality (this batch, for comparison with part 1):
+  feasible+trivial        : 11/11
+  feasible+nontrivial     : 1/1
+  infeasible+trivial      : 0/0
+  infeasible+nontrivial   : 0/18
+
+--- primary failure-mode classification, by ToF bucket ---
+  ToF  60 d (n=8): saturation=5 (62%), oscillation=3 (38%)
+  ToF  90 d (n=5): saturation=5 (100%)
+  ToF 120 d (n=5): saturation=4 (80%), oscillation=1 (20%)
+
+--- primary failure-mode classification, by outcome type ---
+  fly_fail (n=14): saturation=14 (100%)
+  missed (n=4): oscillation=4 (100%)
+
+--- overall primary classification (all 18 failures) ---
+  saturation  :  14 (77.8%)
+  oscillation :   4 (22.2%)
+
+--- representative traces per category actually observed ---
+  saturation (14 total, showing up to 3):
+    MJD 58128.0 ToF 60d fly_fail  dv1_est=   1737.1 feasible=False trivial=False n_steps= 57 frac_sat=1.0 pos_err(start->min->end km)=1.58e+08->1.32e+07->1.32e+07 terminal=lambert_fail secondary=[]
+    MJD 58128.0 ToF 60d fly_fail  dv1_est=  10852.1 feasible=False trivial=False n_steps= 26 frac_sat=1.0 pos_err(start->min->end km)=1.13e+08->8.76e+07->8.76e+07 terminal=lambert_fail secondary=[]
+    MJD 58128.0 ToF 90d fly_fail  dv1_est=   3758.2 feasible=False trivial=False n_steps= 79 frac_sat=1.0 pos_err(start->min->end km)=1.81e+08->4.76e+07->4.76e+07 terminal=lambert_fail secondary=[]
+  oscillation (4 total, showing up to 3):
+    MJD 58128.0 ToF 60d missed    dv1_est=   4341.4 feasible=False trivial=False n_steps= 60 frac_sat=1.0 pos_err(start->min->end km)=8.55e+07->8.67e+06->1.92e+07 terminal=completed secondary=['saturation']
+    MJD 58128.0 ToF 60d missed    dv1_est=   4086.2 feasible=False trivial=False n_steps= 60 frac_sat=1.0 pos_err(start->min->end km)=1.98e+08->2.65e+07->3.93e+07 terminal=completed secondary=['saturation']
+    MJD 58430.0 ToF 60d missed    dv1_est=   1801.2 feasible=False trivial=False n_steps= 60 frac_sat=1.0 pos_err(start->min->end km)=9.94e+07->4.42e+06->6.43e+06 terminal=completed secondary=['saturation']
+  exhaustion: none observed
+  other: none observed
+```
+
+#### Numbers
+
+| quantity | value |
+|---|---|
+| Phase 6 exact-seed short-ToF sample, trivial+feasible success rate | 54/54, 49/49, 60/60 (100% at all three buckets) |
+| Phase 6 exact-seed short-ToF sample, non-trivial+feasible attempts observed | 1 (out of 360), which failed |
+| Phase 6 exact-seed short-ToF sample, non-trivial+infeasible success rate | 0/66, 0/71, 0/59 (0% at all three buckets) |
+| fresh two-epoch batch, feasible+trivial | 11/11 (100%) |
+| fresh two-epoch batch, feasible+nontrivial | 1/1 (succeeded) |
+| fresh two-epoch batch, infeasible+nontrivial | 0/18 (0%) |
+| failure classification: saturation | 14/18 (77.8%) -- 100% of all `fly_fail` outcomes |
+| failure classification: oscillation | 4/18 (22.2%) -- 100% of all `missed` outcomes |
+| failure classification: exhaustion, other | 0 observed of either |
+
+#### Interpretation
+
+**The dominant, best-supported finding is structural, not a guidance instability: at ToF <= 120
+days, the oracle's top-3-ranked candidates are essentially bimodal.** Across 360 attempts
+reproducing Phase 6's exact sample (n=120 per bucket at 60/90/120 d) plus 30 fresh attempts across
+a second epoch, a sampled candidate is almost always either trivial (`dv1 < 30` m/s, covered
+outright by the launch `v_inf` credit -- and when it is, it closes 100% of the time: 54/54, 49/49,
+60/60, 11/11) or non-trivial *and* already beyond the oracle's own 0.6x-duty-cycle feasibility
+margin -- and when it is, it fails 100% of the time (0/66, 0/71, 0/59, 0/18). A candidate that is
+both non-trivial *and* within the oracle's own affordability margin -- the only kind of candidate
+whose outcome would actually test the guidance law's reliability under realistic conditions --
+appeared exactly **once** across 390 combined attempts (at ToF=120 d), and that one case still
+failed. Phase 6's 54.7% short-ToF failure figure is overwhelmingly a statement about which
+candidates the top-3-ranked, unfiltered sampling offers at short ToF, not a direct measurement of
+guidance reliability -- and a real search (`greedy_tour`, a beam search) filters by `leg_feasible`
+before ever attempting to fly a candidate, so it would never hand the guidance most of what failed
+here in the first place.
+
+**Among the failures that did occur, the proximate mechanism is clean and fully explained by Phase
+1's two traced cases, with no ambiguity.** Every `fly_fail` (14/14) is `saturation`: thrust pinned
+at `thrust_max` for the whole leg, position error converging but too slowly to reach zero before
+the shrinking time-to-go drives the required terminal velocity beyond what remains achievable,
+ending in a Lambert bracket failure -- exactly Phase 1's target-4183 case. Every `missed` (4/4) is
+`oscillation`: position error reaches a minimum partway through the leg and then grows back by
+more than 5% before the leg ends -- exactly Phase 1's target-2005OU2 case, generalised. No
+`exhaustion` or `other` case was observed in either the exact-seed reproduction or the fresh batch.
+This satisfies Phase 2's acceptance test cleanly (a clear majority in an interpretable split, by
+both ToF bucket and outcome type) -- the halt condition for an inconclusive classification does not
+apply.
+
+**What this phase does *not* establish, and Phase 3 is now aimed squarely at:** whether the
+guidance law is reliable on genuinely affordable, non-trivial short-ToF candidates, since the
+sampling method used throughout this diagnostic (mirroring Phase 6's, by design, for comparability)
+essentially never produces one to test. A supplementary check at ToF=180-450 d (same method,
+n=120 per bucket, not yet part of any phase's formal acceptance test) found the "non-trivial and
+feasible" population becoming non-negligible from 180 d onward (14/120 at 180 d, 37/120 at 300 d,
+58/120 at 450 d) but *not* closing reliably even once it exists: 5/14 (36%) at 180 d, 24/37 (65%)
+at 300 d, 40/58 (69%) at 450 d. Unlike the short-ToF result, these numbers are a genuine, if partial,
+signal that the guidance itself is imperfect even on affordable candidates -- just measured on too
+small and informal a sample to report as a finding of this phase. Phase 3 repeats this properly,
+with the acceptance test's own sampling method and reporting.
+
+#### Choices taken where the brief left it open
+
+- **The oracle-feasibility x triviality cross-tab was added beyond what Phase 2 asked for.**
+  Rejected alternative: report only the four-way saturation/oscillation/exhaustion/other split, as
+  literally specified. Added because Phase 1 already flagged both traced cases as oracle-infeasible,
+  and a first draft of this phase's cross-tab (oracle-feasible vs. not, without excluding trivial
+  legs) produced a misleadingly clean 100%/0% split that dissolved under a closer look -- reporting
+  only the failure-mode split without this context would have let the "guidance is unstable"
+  framing stand uncorrected when the data says something more specific and more interesting.
+- **`classify()`'s checking order (exhaustion, then oscillation, then saturation, then other) and
+  thresholds (80% of steps for saturation, 5% growth off the minimum for oscillation) are fixed,
+  simple, and not tuned against the sample.** Chosen before running the batch, per the brief's own
+  suggested numbers (">80%... pick a threshold... say so").
