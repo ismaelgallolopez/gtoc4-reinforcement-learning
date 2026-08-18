@@ -2,6 +2,21 @@
 
 ## Summary
 
+**Update (multi-flyby track, halted after Phase 6 of 10 — see `## Multi-flyby track` below):**
+the legality-track result immediately below (`J = 0`, `K = 1350.916 kg`) is still the best legal
+result either track produced; the multi-flyby track did not reach the point of running a search
+that could improve on it. It got as far as auditing and calibrating the leg-cost oracle that any
+such search would depend on (Phases 5-6), found the calibration could not be made to meet its own
+accuracy bar in three genuine attempts (halt condition 1), and stopped before Phase 7's
+element-space pruning or Phase 8's beam search were built. The mechanism identified along the way
+is itself the answer to "what currently limits `J`": **short flyby legs (ToF <= 120 days, the range
+a 44-flyby, 10-year mission needs to average) produced zero verified successes across 360 sampled
+attempts** with the existing thrust-limited guidance, independent of anything a smarter search over
+target sequencing could fix, and the flown-vs-estimated cost ratio for the legs that do succeed
+depends on delta-v magnitude as well as on time of flight, which a time-of-flight-only correction
+(what Phase 6 was scoped to build) cannot capture. Full detail, verbatim acceptance-test output, and
+the reasoning behind stopping here rather than pushing through: `## Multi-flyby track`, Phase 6.
+
 **Best legal `J`: 0. Tiebreak `K = m_f` = 1350.916 kg.**
 Solution file: `results/legality_tours/greedy_mjd58128_solution.txt`
 (launch MJD 58128, `|v_inf|` = 3999.999 m/s, rendezvous with asteroid 2007DC after 1200 days,
@@ -69,7 +84,9 @@ into a geometry with no zero-revolution Lambert solution 73 days from arrival.
 | 1 | analytic closest approach (fixes a 21,600 km measurement floor), rocket-equation delta-v budget, constants audit | `d77037e` |
 | 2 | launch epoch and `v_inf` parameterised, reachable set scanned over the legal ranges (0 -> 208 asteroids) | `6c5b423` |
 | 3 | `src/mission.py` legality bookkeeping, `solution.txt` writer, independent checker | `e8975a9` |
-| 4 | Lambert solver, leg oracle, greedy tour, RL sequencer, the legal missions above | this commit |
+| 4 | Lambert solver, leg oracle, greedy tour, RL sequencer, the legal missions above | `a3a7933` |
+| 5 (multi-flyby track) | audited the flyby leg-cost model; hypothesized bug already absent, counterfactual confirms the mechanism | `45dc3bf` |
+| 6 (multi-flyby track) | empirical Lambert correction fitted three ways; none met its own accuracy bar in 3 attempts -- **halted per halt condition 1** | this commit |
 
 ---
 
@@ -1143,3 +1160,175 @@ cheaper flybys (Phase 6's calibration) combined with a search that can hold open
 branch at a time (Phase 7-8's beam search) addresses the actual mechanism -- a single-path greedy
 that abandons a branch the instant it looks unrecoverable, rather than an underpriced or overpriced
 leg -- justifies proceeding rather than halting here.
+
+### Phase 6 — Empirical correction for the Lambert oracle
+
+#### What changed
+
+`experiments/acceptance_phase6.py` only. **`src/sequencer.py` was not modified.** Three empirical
+correction curves were fitted and evaluated against a common held-out set; none met the phase's own
+acceptance bar (within 20% of true flown delta-v for every held-out leg) in three attempts, so per
+the standing halt rules no correction was applied to the oracle. This halts the multi-flyby track
+at the end of Phase 6 (halt condition 1: "an acceptance test fails and you cannot fix it within
+three attempts") -- see Interpretation below for why, and what was learned regardless.
+
+#### Method
+
+Legs were sampled from two kinds of plausible departure state -- `earth` (Earth departure with the
+4 km/s `v_inf` credit available, as the first leg of a mission) and `mid` (sitting exactly on a
+random real asteroid's own orbital state at a random epoch, a proxy for "the spacecraft is
+somewhere in the near-Earth population," not a literal post-flyby state -- see Interpretation) --
+crossed with 9 ToF buckets from 60 to 1200 days. For each (kind, ToF), a real `sequencer.
+leg_candidates()` call ranked the actual reachable targets from that state, and a candidate was
+drawn biased toward the cheapest few ranks (50/30/20% for rank 0/1/2), exactly mirroring what the
+greedy sequencer or a beam search would actually consider -- not a uniform-random (state, target)
+pair, which is essentially always unreachable (curriculum.py's own finding: a naive draw needs
+~50 km/s). Each candidate was then *flown* with the real thrust-limited shrinking-aim guidance
+(`fly_flyby_leg`); only attempts that closed within the 1000 km flyby tolerance and had a
+non-trivial estimated cost (`dv1_est > 30 m/s`, to exclude the free-by-v_inf-credit legs that carry
+no information about the correction) entered the fit. Attempts per bucket were capped at 120, up to
+6 usable samples each.
+
+#### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/acceptance_phase6.py
+--- sampling: 9 ToF buckets x up to 6 usable legs each, launch MJD 58128.0 ---
+  ToF    60 d: 0/120 usable (missed=25, fly_fail=41, no_candidates=0, trivial=54)
+  ToF    90 d: 0/120 usable (missed=14, fly_fail=57, no_candidates=0, trivial=49)
+  ToF   120 d: 0/120 usable (missed=21, fly_fail=39, no_candidates=0, trivial=60)
+  ToF   180 d: 6/65 usable (missed=12, fly_fail=13, no_candidates=0, trivial=34)
+  ToF   300 d: 6/21 usable (missed=1, fly_fail=3, no_candidates=0, trivial=11)
+  ToF   450 d: 6/13 usable (missed=1, fly_fail=2, no_candidates=0, trivial=4)
+  ToF   600 d: 6/8 usable (missed=1, fly_fail=1, no_candidates=0, trivial=0)
+  ToF   900 d: 6/12 usable (missed=1, fly_fail=5, no_candidates=0, trivial=0)
+  ToF  1200 d: 6/11 usable (missed=0, fly_fail=5, no_candidates=0, trivial=0)
+collected 36 usable samples in 187.2 s
+
+--- per-bucket outcome counts ---
+total attempts: 490, fly_fail: 166 (33.9 %), missed: 76 (15.5 %)
+short ToF (<=120 d) failure rate: 197/360 (54.7 %)
+
+--- attempt 1: binned mean, combined ---
+  ToF   180 d: correction =  1.390  (n=6)
+  ToF   300 d: correction =  1.193  (n=6)
+  ToF   450 d: correction =  1.357  (n=6)
+  ToF   600 d: correction =  1.490  (n=6)
+  ToF   900 d: correction =  1.444  (n=6)
+  ToF  1200 d: correction =  2.115  (n=6)
+
+--- attempt 2: binned mean, split by kind ---
+  earth: 600d=1.553, 1200d=2.465
+  mid: 180d=1.390, 300d=1.193, 450d=1.357, 600d=1.364, 900d=1.444, 1200d=1.414
+
+--- attempt 3: log-linear regression ---
+  ratio = exp(-0.8367) * tof_days^0.1885
+
+--- held-out test: attempt 1 (binned, combined) ---
+  ToF   350 d  kind=mid    est=   967.9  corrected=  1207.3  flown=  1044.5  error= 15.6 %  PASS
+  ToF   380 d  kind=mid    est=  1045.2  corrected=  1338.1  flown=  1119.7  error= 19.5 %  PASS
+  ToF  1190 d  kind=earth  est=  3571.5  corrected=  7472.9  flown=  8567.5  error= 12.8 %  PASS
+  ToF   430 d  kind=mid    est=   246.2  corrected=   328.7  flown=   256.1  error= 28.4 %  FAIL
+  ToF   930 d  kind=mid    est=   305.5  corrected=   461.7  flown=   306.8  error= 50.5 %  FAIL
+  3/5 within 20 %
+
+--- held-out test: attempt 2 (binned, by kind) ---
+  ToF   350 d  kind=mid    est=   967.9  corrected=  1207.3  flown=  1044.5  error= 15.6 %  PASS
+  ToF   380 d  kind=mid    est=  1045.2  corrected=  1338.1  flown=  1119.7  error= 19.5 %  PASS
+  ToF  1190 d  kind=earth  est=  3571.5  corrected=  8750.5  flown=  8567.5  error=  2.1 %  PASS
+  ToF   430 d  kind=mid    est=   246.2  corrected=   328.7  flown=   256.1  error= 28.4 %  FAIL
+  ToF   930 d  kind=mid    est=   305.5  corrected=   440.3  flown=   306.8  error= 43.5 %  FAIL
+  3/5 within 20 %
+
+--- held-out test: attempt 3 (log-linear) ---
+  ToF   350 d  kind=mid    est=   967.9  corrected=  1264.7  flown=  1044.5  error= 21.1 %  FAIL
+  ToF   380 d  kind=mid    est=  1045.2  corrected=  1387.1  flown=  1119.7  error= 23.9 %  FAIL
+  ToF  1190 d  kind=earth  est=  3571.5  corrected=  5877.6  flown=  8567.5  error= 31.4 %  FAIL
+  ToF   430 d  kind=mid    est=   246.2  corrected=   334.5  flown=   256.1  error= 30.6 %  FAIL
+  ToF   930 d  kind=mid    est=   305.5  corrected=   480.0  flown=   306.8  error= 56.4 %  FAIL
+  0/5 within 20 %
+
+--- summary: 5 held-out legs ---
+  attempt 1 (binned, combined) : 3/5 within 20 %
+  attempt 2 (binned, by kind)  : 3/5 within 20 %
+  attempt 3 (log-linear)       : 0/5 within 20 %
+
+  best of the three: binned_combined (3/5)
+```
+
+#### Numbers
+
+| quantity | value |
+|---|---|
+| total leg attempts across all buckets | 490 |
+| overall fly_fail rate | 33.9 % |
+| overall missed (closed guidance run, but >1000 km off) rate | 15.5 % |
+| **short ToF (<=120 d) failure rate (fly_fail + missed)** | **54.7 % (197/360)** |
+| **usable (closed, non-trivial) samples at ToF in {60, 90, 120} d** | **0 / 360 attempts** |
+| usable samples at ToF in {180, ..., 1200} d | 36 (6 per bucket) |
+| flown/estimated ratio range across buckets | 1.19x - 2.12x |
+| best held-out pass rate (3 attempts) | 3/5 (60 %) -- required 5/5 |
+| held-out legs that failed in all 3 attempts | ToF 430 d (ratio 1.04, needs ~no correction) and ToF 930 d (ratio 1.00, needs ~no correction) |
+
+#### Interpretation
+
+**No usable short-ToF sample exists at all.** At each of the three shortest buckets (60, 90, 120
+days), all 120 attempts landed in exactly three outcomes: the candidate was free (already covered
+by the launch `v_inf` credit, so uninformative), or it missed by a wide margin, or the guided
+propagation failed outright (typically propellant exhaustion under continuous saturation, since
+`_guided_step` commands `thrust_max` whenever the required correction is large). Not one non-trivial
+candidate closed. This bears directly on the track's own premise: MSU's winning entry averages one
+flyby every ~83 days over ten years, which requires exactly this ToF range to work routinely, and
+in this sample it does not work at all -- not "requires a bigger correction," but zero verified
+successes out of 360 attempts using the oracle's own top-ranked candidates. Whatever limits
+multi-flyby chaining, short legs failing outright at the guidance level is now a directly measured
+part of it, prior to and independent of anything the later search-quality phases (element pruning,
+beam search) could fix.
+
+**The fitted correction is real but not reliable at the per-leg level, and the reason is
+identifiable.** All three fitting attempts -- one global curve, curves split by departure kind, and
+a smooth log-linear regression -- converge on similar bucket-level corrections (roughly 1.2x-2.1x,
+increasing with ToF, consistent with the legality track's own single-leg measurement of ~2.5x at
+ToF=1000 d). But the same two held-out legs fail every single attempt: both have a true
+flown/estimated ratio within a couple of percent of 1.0 (1.04 and 1.00 respectively) -- i.e. they
+needed essentially *no* correction -- while every fitted curve, keyed on ToF alone, predicts
+1.3x-1.5x for legs in that ToF range and so over-corrects them by 28-56%. Both of these legs also
+have a small `dv1_est` (246 and 306 m/s) relative to most of the fit sample. The pattern is
+consistent with the correction factor depending on the *magnitude* of the required delta-v as well
+as on ToF -- a gentle, near-ballistic correction has little of the re-aim-and-undo inefficiency the
+shrinking-aim law accumulates on a leg that has to fight hard against the geometry -- which a
+ToF-only fit, as Phase 6 was scoped to produce, structurally cannot express.
+
+**This halts the track per the standing rules.** Three genuine, methodologically distinct fitting
+attempts were made against one fixed held-out set; the best reached 3/5, not the required 5/5.
+Extending the fit to include delta-v magnitude as a second input would very plausibly resolve the
+two failures (the mechanism is identified, not mysterious), but that is a materially different
+model than "correction as a function of ToF" and is out of Phase 6's stated scope, so it is not
+attempted here -- doing so would not be a fourth *attempt* at the specified task, it would be
+redefining the task after failing it. No correction was applied to `src/sequencer.py`; the oracle
+is exactly as it was at the end of the legality track's Phase 4. Phases 7-10 (element-space
+pruning, beam search, `v_inf` placement, the learned value function) were not started: proceeding
+to build a beam search on top of a leg-cost oracle whose own calibration attempt failed its
+accuracy bar would repeat the mistake the legality track's Phase 4 already made once (searching
+against an oracle later found to be badly miscalibrated) with the added problem of using it inside
+a wider, more expensive search this time.
+
+#### Choices taken where the brief left it open
+
+- **`kind='mid'` departure states use the target asteroid's exact position *and* velocity**, not a
+  velocity carried over from an actual incoming flyby trajectory (a real flyby does not match
+  velocity, so a genuine post-flyby state would retain most of the spacecraft's *incoming* velocity
+  at the flyby target's position). This is flagged as a proxy in the code and here rather than
+  fixed, because building a genuine post-flyby state generator would mean actually flying flyby
+  legs first to harvest real terminal states -- circular with what this phase is trying to
+  calibrate, and disproportionate for what is meant to be a broad, MVP sample of near-Earth
+  orbital geometries rather than a literal mission history.
+- **Held-out legs were evaluated against all three fits from one shared draw** rather than drawing
+  a fresh held-out set per attempt. Taken deliberately: it is the only way to compare the three
+  methodologies on equal footing, and the acceptance test's "for each" bar was checked against the
+  same 5 legs every time, so no attempt got an easier test than another.
+- **The three attempts were binned-combined, binned-by-kind, and log-linear regression, tried in
+  that order.** Rejected alternative, considered but not attempted: a two-input fit (ToF and
+  `dv1_est` magnitude) that the held-out failures directly suggest would work. Not attempted because
+  it falls outside Phase 6's stated scope (a function of ToF), and the halt rule is meant to trigger
+  on exactly this kind of boundary rather than be argued around by redefining the deliverable.
