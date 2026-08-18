@@ -142,10 +142,18 @@ def _guided_step(state, epoch, step, correction):
         thrust = min(thrust_max, magnitude * state[6] / step) * correction / magnitude
     return thrust, dynamics.propagate(state, thrust, step, 10, mu, Isp_engine)
 
-def fly_flyby_leg(state, epoch, target, arrival):
+def fly_flyby_leg(state, epoch, target, arrival, trace=None):
     """Shrinking-aim Lambert guidance. Returns (samples, final_state, miss_distance) where samples
-    is [(epoch, state, thrust_applied_from_here)], or None if the leg cannot be flown."""
+    is [(epoch, state, thrust_applied_from_here)], or None if the leg cannot be flown.
+
+    `trace`, if given a list, receives one diagnostic dict per control step -- guidance-diagnostic
+    track, phase 1: elapsed/remaining leg time, the aim point (the target's position at the fixed
+    arrival epoch -- constant for a flyby leg, unlike the rendezvous pursuit's sliding aim),
+    position and velocity error to it before the step, commanded thrust, and mass -- plus one
+    terminal dict recording why the leg ended. Purely additive: every existing call with the
+    default `trace=None` reproduces prior behaviour exactly, byte for byte."""
     state = np.asarray(state, dtype=np.float64).copy()
+    leg_start = epoch
     samples = []
     while epoch < arrival - 1e-6:
         step = min(DAY, arrival - epoch)
@@ -153,14 +161,35 @@ def fly_flyby_leg(state, epoch, target, arrival):
         try:
             v_required, _ = lambert.solve(state[:3], target_at_arrival[:3], arrival - epoch, mu)
         except lambert.LambertError:
+            if trace is not None:
+                trace.append(dict(event='lambert_fail', elapsed_days=(epoch - leg_start) / DAY,
+                                  time_remaining_days=(arrival - epoch) / DAY))
             return None
-        thrust, next_state = _guided_step(state, epoch, step, v_required - state[3:6])
+        correction = v_required - state[3:6]
+        thrust, next_state = _guided_step(state, epoch, step, correction)
+        if trace is not None:
+            thrust_norm = float(np.linalg.norm(thrust))
+            trace.append(dict(
+                elapsed_days=(epoch - leg_start) / DAY, time_remaining_days=(arrival - epoch) / DAY,
+                thrust_magnitude=thrust_norm,
+                thrust_direction=(thrust / thrust_norm).tolist() if thrust_norm > 0 else [0.0, 0.0, 0.0],
+                aim_point=target_at_arrival[:3].tolist(),
+                position_error_km=float(np.linalg.norm(target_at_arrival[:3] - state[:3])) / 1e3,
+                velocity_error_ms=float(np.linalg.norm(correction)),
+                mass_kg=float(state[6])))
         samples.append((epoch, state.copy(), thrust))
         state, epoch = next_state, epoch + step
         if state[6] < spacecraft_dry_mass:
+            if trace is not None:
+                trace.append(dict(event='propellant_exhausted', elapsed_days=(epoch - leg_start) / DAY,
+                                  time_remaining_days=(arrival - epoch) / DAY, mass_kg=float(state[6])))
             return None
     final_target = catalog.target_states([target], arrival, mu)[0]
-    return samples, state, float(np.linalg.norm(state[:3] - final_target[:3]))
+    miss = float(np.linalg.norm(state[:3] - final_target[:3]))
+    if trace is not None:
+        trace.append(dict(event='completed', elapsed_days=(epoch - leg_start) / DAY,
+                          position_error_km=miss / 1e3, mass_kg=float(state[6])))
+    return samples, state, miss
 
 def fly_rendezvous_leg(state, epoch, target, duration, lead_days=RENDEZVOUS_LEAD_DAYS):
     """Sliding-aim Lambert pursuit. Returns (samples, final_state, miss_distance, velocity_miss),

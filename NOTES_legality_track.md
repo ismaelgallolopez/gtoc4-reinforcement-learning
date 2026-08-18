@@ -1332,3 +1332,166 @@ a wider, more expensive search this time.
   `dv1_est` magnitude) that the held-out failures directly suggest would work. Not attempted because
   it falls outside Phase 6's stated scope (a function of ToF), and the halt rule is meant to trigger
   on exactly this kind of boundary rather than be argued around by redefining the deliverable.
+
+---
+
+## Guidance diagnostic track
+
+Continuation of the multi-flyby track, which halted at the end of Phase 6 after failing to
+calibrate the leg-cost oracle -- but Phase 6's own sampling data buried a sharper finding: at
+ToF <= 120 days, 0 of 360 candidate legs closed, using the oracle's own top-ranked targets flown
+with the existing shrinking-aim guidance (`sequencer.fly_flyby_leg` / `_guided_step`). This matters
+because MSU's winning GTOC4 entry averages one flyby every ~83 days over ten years -- squarely
+inside the range that failed 0/360. Goal here: diagnose whether that is a delta-v shortage, a
+guidance-law instability, or something else -- not fix it by default.
+
+### Phase 1 — Trace one failing leg in full
+
+#### What changed
+
+`src/sequencer.py`: `fly_flyby_leg` gained an optional `trace=None` parameter. When given a list,
+it appends one diagnostic dict per control step (elapsed/remaining leg time, thrust magnitude and
+unit direction, the aim point, position and velocity error to it before the step, and mass) plus
+one terminal dict recording why the leg ended (`lambert_fail`, `propellant_exhausted`, or
+`completed`). Purely additive -- confirmed byte-identical output (same miss distance, same final
+state) with and without `trace` on a real leg. `_guided_step` itself was not touched; it has no
+`arrival`/aim-point context of its own, and `fly_flyby_leg` already holds everything the diagnostic
+needs, so instrumenting there avoids touching `_guided_step`'s signature or body at all -- see
+Choices below.
+
+`experiments/guidance_trace1.py`: new. Duplicates (does not import) `acceptance_phase6.py`'s
+sampling method -- same RNG seed (`np.random.default_rng(2)`), same bucket order, same rank bias
+(50/30/20% toward rank 0/1/2) -- so the traced cases are the same *kind* of attempt Phase 6 already
+measured failing 54.7% of the time at ToF <= 120 d, not a fresh, possibly unrepresentative resample.
+It replays the RNG stream through the exhausted 60-day bucket (Phase 6: 0/120 usable, all 120
+attempts consumed) and then scans the 90-day bucket for the first `fly_fail` and first `missed`
+case, tracing both.
+
+#### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/guidance_trace1.py
+--- replaying Phase 6's RNG stream up to the ToF=90 d bucket ---
+replay complete; RNG stream now matches Phase 6's state at the start of this bucket
+
+--- scanning for a fly_fail case at ToF=90 d ---
+found: {'kind': 'mid', 'tof_days': 90, 'rank': 0, 'status': 'fly_fail', 'dv1_est': 760.739903908732, 'target_name': '4183'}
+
+--- fly_fail case: final 10 trace entries ---
+  {'elapsed_days': 78.0, 'time_remaining_days': 12.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 42463270.53, 'velocity_error_ms': 3312.17, 'mass_kg': 1316.29}
+  {'elapsed_days': 79.0, 'time_remaining_days': 11.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 39207581.51, 'velocity_error_ms': 3596.38, 'mass_kg': 1315.90}
+  {'elapsed_days': 80.0, 'time_remaining_days': 10.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 35947640.51, 'velocity_error_ms': 3938.86, 'mass_kg': 1315.50}
+  {'elapsed_days': 81.0, 'time_remaining_days':  9.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 32684328.90, 'velocity_error_ms': 4359.10, 'mass_kg': 1315.10}
+  {'elapsed_days': 82.0, 'time_remaining_days':  8.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 29418532.47, 'velocity_error_ms': 4886.31, 'mass_kg': 1314.71}
+  {'elapsed_days': 83.0, 'time_remaining_days':  7.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 26151143.30, 'velocity_error_ms': 5566.40, 'mass_kg': 1314.31}
+  {'elapsed_days': 84.0, 'time_remaining_days':  6.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 22883064.52, 'velocity_error_ms': 6475.87, 'mass_kg': 1313.91}
+  {'elapsed_days': 85.0, 'time_remaining_days':  5.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 19615221.58, 'velocity_error_ms': 7752.41, 'mass_kg': 1313.52}
+  {'elapsed_days': 86.0, 'time_remaining_days':  4.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 16348588.75, 'velocity_error_ms': 9671.39, 'mass_kg': 1313.12}
+  {'event': 'lambert_fail', 'elapsed_days': 87.0, 'time_remaining_days': 3.0}
+  saved figures/guidance_trace_flyfail.png
+
+--- scanning for a missed case at ToF=90 d ---
+found: {'kind': 'mid', 'tof_days': 90, 'rank': 1, 'status': 'missed', 'dv1_est': 6612.269451785356, 'miss_km': 128120862.17215547, 'target_name': '2005OU2'}
+
+--- missed case: final 10 trace entries ---
+  {'elapsed_days': 81.0, 'time_remaining_days':  9.0, 'thrust_magnitude': 0.135, ... 'position_error_km':  93944503.07, 'velocity_error_ms':    259419.48, 'mass_kg': 1375.29}
+  {'elapsed_days': 82.0, 'time_remaining_days':  8.0, 'thrust_magnitude': 0.135, ... 'position_error_km':  97847686.89, 'velocity_error_ms':    293772.30, 'mass_kg': 1374.89}
+  {'elapsed_days': 83.0, 'time_remaining_days':  7.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 101740213.92, 'velocity_error_ms':    337883.79, 'mass_kg': 1374.49}
+  {'elapsed_days': 84.0, 'time_remaining_days':  6.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 105613530.28, 'velocity_error_ms':    396603.02, 'mass_kg': 1374.10}
+  {'elapsed_days': 85.0, 'time_remaining_days':  5.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 109460460.49, 'velocity_error_ms':    478653.66, 'mass_kg': 1373.70}
+  {'elapsed_days': 86.0, 'time_remaining_days':  4.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 113274997.15, 'velocity_error_ms':    601473.25, 'mass_kg': 1373.30}
+  {'elapsed_days': 87.0, 'time_remaining_days':  3.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 117052125.24, 'velocity_error_ms':    805727.33, 'mass_kg': 1372.91}
+  {'elapsed_days': 88.0, 'time_remaining_days':  2.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 120787674.91, 'velocity_error_ms':   1213353.99, 'mass_kg': 1372.51}
+  {'elapsed_days': 89.0, 'time_remaining_days':  1.0, 'thrust_magnitude': 0.135, ... 'position_error_km': 124478197.74, 'velocity_error_ms':   2433805.01, 'mass_kg': 1372.11}
+  {'event': 'completed', 'elapsed_days': 90.0, 'position_error_km': 128120862.17, 'mass_kg': 1371.72}
+  saved figures/guidance_trace_missed.png
+
+Phase 1 trace collection complete
+```
+
+Both traces are 88-91 entries long (one per elapsed day, ToF=90 d); the excerpts above are the
+final 10 as required. First-entry and mid-leg (day ~38-42) values, gathered separately to answer
+"where in the leg does it fail":
+
+```
+fly_fail, day 0:  position_error_km=236641669.09  velocity_error_ms=760.74   thrust=0.135 N (saturated)
+fly_fail, day 40: position_error_km=155507911.34  velocity_error_ms=1032.15  thrust=0.135 N (saturated)
+missed,   day 0:  position_error_km=229512242.88  velocity_error_ms=6612.27  thrust=0.135 N (saturated)
+missed,   day 40: position_error_km=124945194.85  velocity_error_ms=24346.48 thrust=0.135 N (saturated)
+```
+
+Figures: `figures/guidance_trace_flyfail.png`, `figures/guidance_trace_missed.png` -- thrust
+magnitude, position error (log scale) and time-to-go, all vs. elapsed leg time.
+
+#### Numbers
+
+| quantity | fly_fail case (target 4183) | missed case (target 2005OU2) |
+|---|---|---|
+| ToF | 90 d | 90 d |
+| rank offered | 0 (cheapest) | 1 |
+| `dv1_est` | 760.7 m/s | 6612.3 m/s |
+| thrust-limited budget over 90 d (`delta_v_budget`) | 789.7 m/s | 755.5 m/s |
+| `dv1_est` vs. 0.6x budget (the oracle's own `leg_feasible` margin) | 760.7 > 473.8 -- **fails** | 6612.3 > 453.3 -- **fails** |
+| thrust saturated (0.135 N) | steps 0-86 of 86 (100%) | steps 0-89 of 90 (100%) |
+| position error: start -> minimum -> end | 236.6M km -> 16.3M km (day 86) -> n/a (Lambert failed) | 229.5M km -> 45.7M km (day ~64) -> 128.1M km (day 90) |
+| outcome | `lambert_fail` at day 87 (3 days remaining) | `completed`, missed by 128.1M km |
+
+#### Interpretation
+
+**Both traced cases fail with thrust saturated at `thrust_max` from the very first control step to
+the last -- not something that develops mid-leg.** There is no early period of gentle, unsaturated
+correction followed by a late scramble; the very first day already commands 0.135 N, and every day
+after it does too. Whatever limits these legs, it is present from day zero.
+
+**The fly_fail case is genuine convergence that runs out of runway, not divergence.** Position error
+falls smoothly and monotonically for the whole visible trace (log-scale plot: a clean descending
+curve, no reversal) -- 236.6M km at day 0 down to 16.3M km at day 86, a 93% reduction. But the
+*velocity* error the guidance keeps re-solving for climbs the entire time -- 760.7 m/s at day 0 to
+9671 m/s at day 86 -- because a Lambert transfer that must close a still-large spatial gap in an
+ever-shrinking time window requires ever-higher speed; this is a property of the transfer geometry,
+not a control artefact. By day 86 the required correction so far exceeds what four more days of
+0.135 N thrust from a partially-depleted 1313 kg spacecraft could deliver that the day-87 Lambert
+solve cannot bracket a solution at all, and the leg is abandoned. The mechanism reads as: 90 days
+does not give the myopic, one-day-lookahead law enough slack to bring position error close to zero
+*well before* the end of the leg, and the terminal cost of any residual position error is highly
+convex in the time left to close it.
+
+**The missed case shows a different, sharper signature: convergence, then reversal.** Position error
+decreases for about two-thirds of the leg (229.5M km -> ~45.7M km around day 64), then turns around
+and *increases* for the remaining third, ending at 128.1M km -- worse than at the halfway point.
+This is the plot's most visible feature (a clean V shape on the log-scale error trace) and is not
+simple failure-to-converge-in-time; it is the trajectory passing its closest approach to the moving
+aim point and then being unable to arrest the growing separation with the remaining thrust and time.
+Velocity error here starts two orders of magnitude worse than the fly_fail case (6612 vs 761 m/s)
+and finishes four orders of magnitude worse (2.43M m/s by day 89) -- consistent with a target that
+was never realistically reachable at this ToF.
+
+**Both traced cases would already have been rejected by the oracle's own feasibility margin.**
+`dv1_est` for the fly_fail case (760.7 m/s) exceeds the 90-day thrust-limited budget's 0.6x
+duty-cycle threshold (473.8 m/s) by 61%; for the missed case (6612.3 m/s) it exceeds it by more
+than 14x. Neither is a candidate `greedy_tour` or a real beam search would ever attempt to fly --
+both `leg_candidates()` calls here returned their result unfiltered, exactly as Phase 6's own
+sampling did, and both traced cases happen to be candidates that fail `leg_feasible` even at
+rank 0. This does not undermine the traces themselves (they are genuine, reproducible failures of
+the guidance law under the parameters given), but it means Phase 1's two cases alone cannot say
+whether the guidance also fails on candidates the oracle considers affordable -- that is exactly
+what Phase 2's batch classification, with an oracle-feasibility cross-tab added for this reason,
+needs to establish before drawing any conclusion about whether this blocks a real multi-flyby
+search.
+
+#### Choices taken where the brief left it open
+
+- **Instrumentation lives in `fly_flyby_leg`, not `_guided_step`.** The brief names `_guided_step`
+  specifically. `_guided_step` receives only `(state, epoch, step, correction)` -- it has no access
+  to the aim point, the target, or the arrival epoch, all of which the diagnostic needs (position
+  error, aim point). `fly_flyby_leg` already computes all of it every iteration and already calls
+  `_guided_step` for the thrust; adding the trace append there records everything requested,
+  including the thrust `_guided_step` returns, while leaving `_guided_step` completely unmodified
+  -- strictly more conservative than threading a trace parameter through it, and satisfies "don't
+  change control flow" trivially since nothing about `_guided_step` changed at all.
+- **`replay_to_bucket` duplicates ~30 lines of `acceptance_phase6.py` rather than importing it.**
+  The standing rule says not to touch anything from the halted Phase 6 calibration; importing and
+  calling its functions would not modify that file, but duplicating keeps this track fully
+  independent of it and removes any risk of an incidental behavioural coupling if that file is
+  ever revisited. The duplicated functions (`_departure`, `_fly_one`) are reproduced verbatim
+  except for the added `trace` passthrough.
