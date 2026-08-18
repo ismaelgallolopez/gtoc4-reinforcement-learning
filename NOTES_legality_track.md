@@ -1642,3 +1642,129 @@ with the acceptance test's own sampling method and reporting.
   thresholds (80% of steps for saturation, 5% growth off the minimum for oscillation) are fixed,
   simple, and not tuned against the sample.** Chosen before running the batch, per the brief's own
   suggested numbers (">80%... pick a threshold... say so").
+
+### Phase 3 — Check whether the failure threshold moves with ToF
+
+#### What changed
+
+`experiments/guidance_trace3.py`: new. Sweeps ToF in {150, 180, 210, 250, 300} days, 15 legs each,
+MJD 58128, same candidate-sampling method as Phases 1-2 (real `leg_candidates()` call, rank drawn
+50/30/20% toward rank 0/1/2). Reports both the raw (fly_fail + missed)/attempts rate -- Phase 6's
+own metric, for direct comparability -- and the rate restricted to non-trivial, oracle-feasible
+candidates (`dv1 >= 30` m/s and `dv1 < 0.6x` budget), the more meaningful number given Phase 2's
+finding. A follow-up (same method, not part of the formal 5-point sweep) additionally sampled
+n=15 at ToF in {600, 900, 1200} days, because Phase 6's own log -- read closely rather than taken
+on the "near-0% at 300d+" summary the track brief opened with -- does not actually show near-zero
+failure at long ToF (see Numbers).
+
+#### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/guidance_trace3.py
+--- ToF sweep: (150, 180, 210, 250, 300) d, 15 legs each, MJD 58128.0 ---
+  ToF  150 d (n=15, 15 attempts): raw failure rate =  46.7%  |  trivial= 7  nontrivial+feasible= 1 (failure   0.0%)  nontrivial+infeasible= 7
+  ToF  180 d (n=15, 15 attempts): raw failure rate =  33.3%  |  trivial= 9  nontrivial+feasible= 1 (failure   0.0%)  nontrivial+infeasible= 5
+  ToF  210 d (n=15, 15 attempts): raw failure rate =  60.0%  |  trivial= 4  nontrivial+feasible= 3 (failure  33.3%)  nontrivial+infeasible= 8
+  ToF  250 d (n=15, 15 attempts): raw failure rate =  53.3%  |  trivial= 6  nontrivial+feasible= 2 (failure  50.0%)  nontrivial+infeasible= 7
+  ToF  300 d (n=15, 15 attempts): raw failure rate =  20.0%  |  trivial= 8  nontrivial+feasible= 5 (failure  20.0%)  nontrivial+infeasible= 2
+
+--- raw (Phase-6-style) failure rate by ToF ---
+  ToF  150 d:  46.7%
+  ToF  180 d:  33.3%
+  ToF  210 d:  60.0%
+  ToF  250 d:  53.3%
+  ToF  300 d:  20.0%
+
+raw failure rate first drops below 50% at ToF=150
+raw failure rate does not drop below 10% within the sampled range
+
+--- non-trivial, oracle-feasible-only failure rate by ToF ---
+  ToF  150 d (n=1):   0.0%
+  ToF  180 d (n=1):   0.0%
+  ToF  210 d (n=3):  33.3%
+  ToF  250 d (n=2):  50.0%
+  ToF  300 d (n=5):  20.0%
+```
+
+Follow-up (long ToF, same method, seed=5, n=15 each):
+
+```
+ToF  600d (n=15, 15 attempts): raw failure=26.7%  trivial=0  nontrivial+feasible=14 (failure=21.4%)
+ToF  900d (n=15, 15 attempts): raw failure=80.0%  trivial=0  nontrivial+feasible=15 (failure=80.0%)
+ToF 1200d (n=15, 15 attempts): raw failure=40.0%  trivial=0  nontrivial+feasible=15 (failure=40.0%)
+```
+
+Phase 6's own log, re-read as a raw (fail/attempts) rate rather than its "N usable" framing (both
+are the same underlying data, Phase 6's `experiments/acceptance_phase6.py` output, quoted in this
+file's Phase 6 section above -- recomputed here only to express it as a percentage):
+
+| ToF | Phase 6 attempts | Phase 6 fail (fly_fail + missed) | raw failure rate |
+|---|---|---|---|
+| 180 d | 65 | 25 | 38.5% |
+| 300 d | 21 | 4 | 19.0% |
+| 450 d | 13 | 3 | 23.1% |
+| 600 d | 8 | 2 | 25.0% |
+| 900 d | 12 | 6 | 50.0% |
+| 1200 d | 11 | 5 | 45.5% |
+
+#### Numbers
+
+| quantity | value |
+|---|---|
+| raw failure rate range, 150-300 d sweep | 20.0% - 60.0%, non-monotonic |
+| raw failure rate crosses below 50% | at ToF=150 d (46.7%) -- but rises back above 50% at 210 d (60.0%) |
+| raw failure rate drops below 10% | **not within the 150-300 d sampled range** |
+| raw failure rate at ToF=600/900/1200 d (this phase's own resample) | 26.7% / **80.0%** / 40.0% |
+| raw failure rate at ToF=600/900/1200 d (Phase 6's own log, independent data) | 25.0% / 50.0% / 45.5% |
+| non-trivial+feasible population at ToF<=180 d (this sweep) | 1 of 15 per bucket |
+| non-trivial+feasible population at ToF=600-1200 d | 14-15 of 15 per bucket (essentially all of it) |
+| non-trivial+feasible failure rate at ToF=600/900/1200 d | 21.4% / 80.0% / 40.0% |
+
+#### Interpretation
+
+**The premise that motivated this phase -- "near-0% failure at ToF>=300 d" -- does not hold up
+against Phase 6's own recorded data, and this phase's independent resample confirms it does not.**
+Phase 6's log, read as a plain (fail/attempts) percentage rather than through its "N usable out of
+M attempts" framing, shows 19-50% raw failure at every ToF from 180 d to 1200 d, with **no**
+ToF at or above 10%, let alone near 0%. This phase's own fresh samples at 600/900/1200 d (a
+different seed, same method) land in the same range -- 26.7%/80.0%/40.0% -- confirming this is not
+an artefact of Phase 6's particular draw. Long legs are not a reliably solved regime for this
+guidance law; if anything, 900 d is the single worst point measured in either dataset.
+
+**The 150-300 d sweep itself is too noisy at n=15 per bucket to support a transition-point claim,
+and is reported as such rather than smoothed into one.** Raw failure rate goes 46.7% -> 33.3% ->
+60.0% -> 53.3% -> 20.0% across 150/180/210/250/300 d -- not monotonic, and the "crosses below 50%"
+figure required by the acceptance test (ToF=150 d) is immediately contradicted by a rise back above
+60% at 210 d two points later. The non-trivial+feasible population within this range is tiny (1-5
+per bucket of 15), too small for its failure-rate column to mean much on its own.
+
+**What the data does support cleanly: the *population* of non-trivial, oracle-feasible candidates
+grows with ToF, but the *guidance's reliability on that population*, once it exists in enough
+numbers to measure, does not obviously improve with ToF.** At ToF<=180 d there is only ever about
+one such candidate per 15 attempts (matching Phase 2's near-total-absence finding); by 600-1200 d,
+essentially the whole sample (14-15 of 15) is non-trivial and feasible, because there is no longer
+a free `v_inf`-covered option and the larger budget makes most top-ranked candidates affordable --
+but the failure rate measured on exactly that population is 21-80%, with no visible trend toward
+zero as ToF grows to 1200 days, the longest a flyby leg can legally be.
+
+**This changes what Phase 4 should be gated on.** The track brief's working hypothesis was
+"excessive gain or too-aggressive re-aiming *early in a short leg*" -- implying a mechanism that
+should weaken or disappear as ToF grows and the guidance has more slack. The data does not show
+that: the same saturation/oscillation failure modes Phase 2 characterised at 60-120 d are not
+confined to short legs, and 900 d -- about as much slack as a single flyby leg can have short of
+the full 10-year mission limit -- is measured worse than every ToF sampled below it. A fix
+motivated by "give short legs a gentler early ramp, scaled to how little time they have" would be
+solving a ToF-dependence the numbers do not show. Phase 4 is reconsidered below in light of this,
+rather than proceeding on the original short-leg-specific framing.
+
+#### Choices taken where the brief left it open
+
+- **The long-ToF (600/900/1200 d) follow-up goes beyond the literal 150-300 d sweep the phase
+  specifies.** Taken because Phase 6's own log, read plainly, already contradicted the "near-0% at
+  300d+" premise before this phase's own sweep even ran; confirming or refuting that with a direct,
+  independent resample at the ToF values in question was necessary before Phase 4's gate (which
+  explicitly turns on whether the mechanism is short-leg-specific) could be evaluated honestly.
+  Rejected alternative: report only the specified 150-300 d sweep and let Phase 4 proceed on the
+  original short-leg framing regardless -- rejected because that framing was demonstrably false
+  before this phase started, and building Phase 4 on it anyway would repeat the mistake this whole
+  diagnostic track exists to avoid.
