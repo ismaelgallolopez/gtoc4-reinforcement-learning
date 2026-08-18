@@ -1768,3 +1768,145 @@ rather than proceeding on the original short-leg-specific framing.
   original short-leg framing regardless -- rejected because that framing was demonstrably false
   before this phase started, and building Phase 4 on it anyway would repeat the mistake this whole
   diagnostic track exists to avoid.
+
+### Phase 4 — Propose a fix, and test it narrowly (gated)
+
+#### Gate decision
+
+Phase 3 found the saturation/oscillation failure modes present, and not obviously improving, from
+60 through 1200 days -- contradicting the track brief's opening hypothesis of a mechanism confined
+to "too-aggressive re-aiming early in a short leg." Rather than treat that as disqualifying
+(halt condition 4's "inherently a control-authority limit... do not attempt a fix"), the traced
+data itself pointed at a specific, ToF-*independent* candidate mechanism, checked before deciding
+whether to proceed: `_guided_step` sizes the thrust needed to deliver the current correction against
+`step` -- the physical integration step, fixed at one day except on a leg's last day -- never
+against how much time is actually left. Phase 1's fly_fail case needed 760.7 m/s on day 0 of a
+90-day leg: 88x what one day of `thrust_max` can deliver, but only 96% of what the *full* 90 days
+can deliver. This is a small, local, well-motivated candidate fix squarely inside Phase 4's scope
+(a gain/horizon change to `_guided_step`, not a redesign), so it was implemented and tested per the
+gate's instructions, rather than stopped on before trying.
+
+#### What changed (implemented, tested, then reverted -- see Numbers)
+
+`src/sequencer.py`: `_guided_step` gained an optional `horizon` parameter sizing the commanded
+thrust against a caller-supplied time base instead of `step`; `fly_flyby_leg` called it with
+`horizon=arrival - epoch` (the leg's remaining time), spreading each day's correction over every
+day actually left rather than demanding it all within the next 24 hours. Confirmed structurally
+isolated: `fly_rendezvous_leg`'s call to `_guided_step` was untouched (no `horizon` argument), and
+`horizon=None` reproduces the prior formula exactly. **After testing (below), this was reverted in
+full** -- `_guided_step` and `fly_flyby_leg` are now byte-for-byte identical to their state at the
+end of the legality track's Phase 4 (`git diff 679f930 -- src/sequencer.py` shows only a docstring
+addition). The attempt is recorded here rather than kept in the code.
+
+#### Acceptance-test output (verbatim)
+
+Phase 2's exact sample (same seeds, same candidates, same two epochs) re-run with the fix active:
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/guidance_trace2.py   # with the fix applied
+--- part 1: Phase 6's exact seed=2 short-ToF samples, feasibility x triviality ---
+   ToF     n     trivial+feasible    nontrivial+feasible    trivial+infeasible    nontrivial+infeasible
+    60   120                54/54                    0/0                   0/0                     0/66
+    90   120                49/49                    0/0                   0/0                     0/71
+   120   120                60/60                    0/1                   0/0                     0/59
+
+--- part 2: fresh two-epoch batch, n=30 ---
+outcome counts: {'fly_fail': 14, 'missed': 5, 'ok': 11}
+
+feasibility x triviality (this batch, for comparison with part 1):
+  feasible+trivial        : 11/11
+  feasible+nontrivial     : 0/1
+  infeasible+trivial      : 0/0
+  infeasible+nontrivial   : 0/18
+
+--- overall primary classification (all 19 failures) ---
+  saturation  :  14 (73.7%)
+  oscillation :   4 (21.1%)
+  other       :   1 (5.3%)
+```
+
+Phase 3's exact sweep (same seed, same launch epoch) re-run with the fix active:
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/guidance_trace3.py   # with the fix applied
+--- ToF sweep: (150, 180, 210, 250, 300) d, 15 legs each, MJD 58128.0 ---
+  ToF  150 d (n=15): raw failure rate =  53.3%  |  nontrivial+feasible= 1 (failure 100.0%)
+  ToF  180 d (n=15): raw failure rate =  40.0%  |  nontrivial+feasible= 1 (failure 100.0%)
+  ToF  210 d (n=15): raw failure rate =  73.3%  |  nontrivial+feasible= 3 (failure 100.0%)
+  ToF  250 d (n=15): raw failure rate =  60.0%  |  nontrivial+feasible= 2 (failure 100.0%)
+  ToF  300 d (n=15): raw failure rate =  46.7%  |  nontrivial+feasible= 5 (failure 100.0%)
+
+raw failure rate first drops below 50% at ToF=180
+raw failure rate does not drop below 10% within the sampled range
+```
+
+#### Numbers
+
+| ToF | raw failure rate, before | raw failure rate, after fix | nontrivial+feasible failure rate, before | after fix |
+|---|---|---|---|---|
+| 60-120 d (Phase 2 batch, n=30 combined) | 18/30 = 60.0% | 19/30 = 63.3% | 0/1 = 0% (n too small) | 0/1 = 0% (same case, unchanged) |
+| 150 d | 46.7% | 53.3% | 0/1 = 0% | 1/1 = **100%** |
+| 180 d | 33.3% | 40.0% | 0/1 = 0% | 1/1 = **100%** |
+| 210 d | 60.0% | 73.3% | 2/3 = 66.7% | 3/3 = **100%** |
+| 250 d | 53.3% | 60.0% | 1/2 = 50.0% | 2/2 = **100%** |
+| 300 d | 20.0% | 46.7% | 1/5 = 20.0% | 5/5 = **100%** |
+
+**The fix makes the raw failure rate worse at every one of the five 150-300 d buckets, with no
+exception, and the non-trivial-feasible failure rate goes from a mixed 0-67% to a uniform 100% at
+every bucket where a comparison is possible.** The two large (n=120x3, n=30) short-ToF samples show
+no measurable change either way, because -- as Phase 2 established -- they contain almost no
+genuinely-affordable, non-trivial candidates for the fix to help or hurt; the one that exists (at
+120 d) fails both before and after. The Phase 2 batch's own raw rate ticked up slightly too
+(60.0% -> 63.3%), driven by the single regression visible in the acceptance-test output above
+(`ok`: 12 -> 11, `missed`: 4 -> 5).
+
+#### Interpretation
+
+**The diagnosis was right about the mechanism; the remedy was wrong, and the data says so
+unambiguously.** Phase 1-3 correctly identified that the old sizing formula demands the full
+correction within one day regardless of how much time remains, and that this is what drives
+saturation. The fix removes exactly that: an unsaturated correction is now spread evenly over every
+day left in the leg. It does not help. It hurts, consistently, everywhere it could be measured.
+
+**Why: this is a receding/moving-target intercept, not a resource-budgeting problem, and early
+correction has leverage that a later, evenly-paced correction cannot recover.** The old law snaps
+onto the exact ballistic arc that would hit the target *today's estimate of where it will be*
+whenever that snap is affordable in one day -- and when it is, the spacecraft is, from that point,
+exactly on the trajectory the physics says it needs, needing no further correction until the next
+day's fresh Lambert solve (constant target position for a flyby leg) finds a new one, typically
+small, from natural integration drift. Spreading the same total correction over many days instead
+means the spacecraft spends most of the leg *not* on that trajectory -- deliberately under-corrected
+relative to what the current geometry calls for -- so the *natural* two-body relative motion between
+the partially-corrected spacecraft and the target is free to diverge for longer before the guidance
+catches up. Lambert's own required-velocity term is highly convex in time-to-go (Phase 1's plot:
+velocity error climbed from 760.7 to 9671 m/s as time-to-go fell from 90 to 4 days, even while
+position error was still *shrinking*): delaying correction defers cost into exactly the part of the
+leg where it compounds fastest. The 0.6x duty-cycle margin in `leg_feasible` was already meant to
+buy slack for guidance imperfection; Phase 1's traced case needed 96% of the full, un-derated
+90-day budget, leaving essentially none -- no reallocation of *when* thrust is spent changes that a
+leg with 96% of its total budget already spoken for by geometry has almost no room for any
+guidance law, however it paces itself, to be imperfect at all.
+
+**This does not fit Phase 4's positive path (a narrow tuning fix that helps), and the disciplined
+outcome is the one the halt condition anticipates for that case: report the result, keep nothing.**
+The fix is reverted. The guidance law is byte-identical to its state at the end of the legality
+track's Phase 4. No behavioural change survives this phase. The negative result -- a specific,
+plausible, testable idea, tried and found to make things worse everywhere measured, with a
+physical explanation for why -- is itself the deliverable, exactly as the brief anticipated for a
+diagnosis that "does not point at something this narrow."
+
+#### Choices taken where the brief left it open
+
+- **The fix was fully implemented and tested (not just proposed and stopped on) before being
+  reverted.** The brief's gate technically only requires stopping *if* the diagnosis doesn't point
+  at something narrow; here it did, so the fix was built and tested per the "propose... implement
+  only that... acceptance test: re-run..." instructions, and the *result* of that test -- not a
+  prior judgement about scope -- is what says not to keep it. This is different from, and stronger
+  evidence than, declining to try in the first place would have been.
+- **Reverted to a byte-identical `_guided_step`/`fly_flyby_leg` rather than leaving the `horizon`
+  parameter in place unused.** Rejected alternative: keep the parameter, default it to `None`
+  (preserving behaviour), and simply never call it with a non-default value. Rejected because an
+  unused, tested-and-found-harmful parameter left in the function signature is exactly the kind of
+  thing "minimal diffs" and "MVP quality" argue against -- the finding belongs in the notes, not as
+  dead code inviting a future caller to re-enable it without the context of why it was tried and
+  abandoned.

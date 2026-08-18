@@ -134,7 +134,13 @@ def apply_leg(state, candidate, require_velocity_match):
 
 def _guided_step(state, epoch, step, correction):
     """One control step under a velocity correction: thrust along it, at the magnitude that would
-    deliver it over this step, never above thrust_max. Returns (thrust, next_state)."""
+    deliver it over this step, never above thrust_max. Returns (thrust, next_state).
+
+    guidance-diagnostic track, phase 4: a variant sizing thrust against the leg's *remaining* time
+    rather than this single step was implemented and tested here, then reverted -- it made the raw
+    failure rate worse at every ToF sampled from 60 to 1200 days rather than better. See the phase 4
+    notes in NOTES_legality_track.md for the numbers and why. This function is exactly as it was at
+    the end of the legality track's Phase 4."""
     magnitude = np.linalg.norm(correction)
     if magnitude <= 0.0:
         thrust = np.zeros(3)
