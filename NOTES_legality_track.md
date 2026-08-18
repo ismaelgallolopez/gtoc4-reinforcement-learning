@@ -17,6 +17,32 @@ depends on delta-v magnitude as well as on time of flight, which a time-of-fligh
 (what Phase 6 was scoped to build) cannot capture. Full detail, verbatim acceptance-test output, and
 the reasoning behind stopping here rather than pushing through: `## Multi-flyby track`, Phase 6.
 
+**Update (guidance diagnostic track, all 4 phases completed — see `## Guidance diagnostic track`
+below):** dug into the specific claim above ("0/360 at ToF <= 120 d") and found it does not mean
+what it looks like it means. Across 390 combined sampled attempts at ToF <= 120 d, a candidate
+offered by the oracle's own top-3 ranking is essentially always either trivial (free, covered
+outright by the launch `v_inf` credit — closes 100% of the time, 174/174) or already beyond the
+oracle's own 0.6x-duty-cycle affordability margin (fails 100% of the time, 0/214) — a candidate that
+is both realistic *and* affordable appeared **twice** across two independent samples, one succeeding
+and one failing. So the guidance law's
+short-ToF failures are overwhelmingly a statement about which candidates get offered, not a
+guidance-law defect — and a real search already filters by that same margin before ever asking the
+guidance to fly anything, so it would rarely hand the guidance what failed here. The part that
+*is* a real guidance-law finding: the same saturation/overshoot failure signatures, and a
+comparably high failure rate (20-80%, worst at 900 days) on candidates that genuinely are
+affordable, persist all the way out to 1200 days — not confined to short legs as the track's
+opening hypothesis assumed. A specific, well-motivated fix (spread each day's correction over the
+leg's remaining time instead of demanding it all within the next 24 hours) was implemented and
+tested against the exact same seeds/candidates already sampled: it made the raw failure rate worse
+at every one of five 150-300 d buckets sampled (e.g. 20.0% → 46.7% at 300 d) and pushed the
+already-small feasible-and-realistic population's failure rate from a mixed 0-67% to a uniform
+100% everywhere a comparison was possible. Reverted; the guidance law is unchanged from the
+legality track. Bottom line for whether this guidance law can support a multi-flyby mission: usable
+on candidates a real search would actually offer it at short ToF (which are almost all trivially
+cheap when they exist at all), but *not* demonstrated reliable at the 20-80% level on genuinely
+substantive legs at any ToF sampled from 60 to 1200 days, and the obvious small fix for that does
+not work. Full detail: `## Guidance diagnostic track`.
+
 **Best legal `J`: 0. Tiebreak `K = m_f` = 1350.916 kg.**
 Solution file: `results/legality_tours/greedy_mjd58128_solution.txt`
 (launch MJD 58128, `|v_inf|` = 3999.999 m/s, rendezvous with asteroid 2007DC after 1200 days,
