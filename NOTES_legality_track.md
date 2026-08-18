@@ -1027,3 +1027,119 @@ The learning curve above, from the run log, is what survives.
   attempts were aborted inside ten minutes each and are not counted: the first because the pool
   restriction was built on Phase 2's closed-form screen and contained no rendezvous target at all,
   the second on relaunching it as a tracked background job. Neither produced a result.
+
+---
+
+## Multi-flyby track
+
+Continuation of the legality track's Phase 4 finding: a legal mission exists (J = 0, K = 1350.916
+kg), but the launch v_inf gets fully spent bending toward the first flyby target, leaving nothing
+for a rendezvous afterward. Goal here: chain multiple legal flybys into a legal rendezvous. Not
+J = 44 (MSU's winning entry, ~83 days/flyby over 10 years) — a defensible AE4350-scale result,
+honestly reported, with the limiting mechanism identified.
+
+### Phase 5 — Audit the leg cost model for flybys
+
+#### What changed
+
+Nothing in `src/`. The static audit found the hypothesized bug already absent: `sequencer.py`'s
+`leg_feasible` (written during the legality track's Phase 4, see its docstring) already charges
+`dv1` only for a flyby and `dv1 + dv2` only for a rendezvous, and every call site in `sequencer.py`
+and `train_sequencer.py` passes `require_velocity_match` correctly. There is nothing to fix.
+
+To still produce the before/after comparison the acceptance test asks for, `experiments/
+acceptance_phase5.py` reconstructs the counterfactual "buggy" oracle (dv1 + dv2 charged
+unconditionally, flyby included) by monkey-patching `sequencer.leg_feasible` for the "before" run
+only, entirely inside the test script, then restores it and reruns for "after" (the current,
+unmodified code). No production file was touched.
+
+#### Acceptance-test output (verbatim)
+
+```
+$ ~/miniconda3/envs/tudat-space/bin/python experiments/acceptance_phase5.py
+--- static audit: every leg_feasible call site ---
+  sequencer:246: if leg_feasible(candidate, state[6], True, duty_cycle):
+  sequencer:340: if leg_feasible(c, state[6], False, duty_cycle)]
+  train_sequencer:84: if sequencer.leg_feasible(c, self.state[6], False)][:self.k]
+  train_sequencer:122: if sequencer.leg_feasible(candidate, self.state[6], True):
+call sites found: 4
+
+--- live audit: full 1436-asteroid pool, launch MJD 58128.0 ---
+
+--- BEFORE (counterfactual: dv1+dv2 charged on every leg, flyby included) (wall clock 8 s) ---
+  flyby legs planned         : 1
+  flyby leg ToFs (days)       : [300]
+  median flyby ToF            : 300.0 d
+  mean flyby ToF              : 300.0 d
+  scorable_after_flybys       : 0
+  rendezvous achieved          : True
+  rendezvous duration_days    : 1200
+  rendezvous mass_kg          : 1350.916
+
+--- AFTER (current code: dv1-only on flyby legs, dv1+dv2 on rendezvous) (wall clock 14 s) ---
+  flyby legs planned         : 3
+  flyby leg ToFs (days)       : [60, 150, 300]
+  median flyby ToF            : 150.0 d
+  mean flyby ToF              : 170.0 d
+  scorable_after_flybys       : 0
+  rendezvous achieved          : True
+  rendezvous duration_days    : 1200
+  rendezvous mass_kg          : 1350.916
+
+--- comparison ---
+  before: n=1 legs, median=300.0
+  after : n=3 legs, median=150.0
+  median ToF change (after vs before): +50.0 %
+
+Phase 5 acceptance data collected
+```
+
+#### Numbers
+
+| quantity | before (dv1+dv2 on flybys) | after (dv1-only, current code) |
+|---|---|---|
+| flyby legs chained | 1 | 3 |
+| flyby leg ToFs (days) | [300] | [60, 150, 300] |
+| median flyby ToF | 300.0 d | 150.0 d |
+| mean flyby ToF | 300.0 d | 170.0 d |
+| flybys in the final scored tour | 0 | 0 |
+| final rendezvous leg length | 1200 d | 1200 d |
+| final J | 0 | 0 |
+| final K | 1350.916 kg | 1350.916 kg |
+
+#### Interpretation
+
+**The hypothesized bug does not exist in the current code.** `leg_feasible` has charged `dv1` only
+for flybys since it was written in the legality track's Phase 4 — this was already identified and
+fixed before this track started, not newly discovered here.
+
+**Reintroducing it as a counterfactual confirms the mechanism is real, in the predicted direction.**
+Charging `dv2` on a flyby prices every near-miss as if it needed a full velocity match (order
+1-3 km/s for these targets), which is enough to make short-ToF candidates infeasible against the
+smaller delta-v budget available over a short window; the greedy is pushed toward longer ToF
+buckets, where the budget is larger and can absorb the inflated cost. Measured effect: 3x more
+flybys chained (1 -> 3) at half the median duration (300 -> 150 days) once the correct dv1-only
+costing is used. Phase 6's plan to sample legs down to 83-day scale is reasonable on this evidence
+-- short legs are reachable once flybys are not mispriced.
+
+**But this does not change the final scored mission at all.** With the bug or without it, the tour
+the greedy actually returns is identical: zero flybys survive to the winning tour, and the single
+rendezvous leg is 1200 days in both cases, because `RENDEZVOUS_DURATIONS_DAYS` starts at 1200 and
+`finish_with_rendezvous` is never asked to try anything shorter. So this audit explains why the
+*attempted* flyby chain lengthens under the wrong cost model, but it does not explain why *no*
+flyby chain -- short or long, buggy costing or correct -- survives into a closeable tour. That is
+a downstream effect of the greedy's single-path search: it commits to the cheapest flyby, evaluates
+rendezvous feasibility only from the state that leg produces, and never explores an alternative
+branch when that state turns out to be unrecoverable. Fixing the cost model was necessary (it
+triples the flyby count explored) but not sufficient; the search itself only ever tries one path.
+
+**Reading against halt condition 3.** The condition asks whether fixing the flyby-cost bug (if it
+exists) materially shortens *typical leg length*. Read as the length of the legs the search
+explores and is willing to chain, the answer is a clear, measured yes: median flyby ToF dropped 50%
+and the chain grew 3x. Read as the length of the leg in the final *scored* tour, the answer is no:
+that leg is 1200 days either way, because it is the only leg that survives, and it always has been.
+Both readings are reported above rather than picked between. The evidence that opening up shorter,
+cheaper flybys (Phase 6's calibration) combined with a search that can hold open more than one
+branch at a time (Phase 7-8's beam search) addresses the actual mechanism -- a single-path greedy
+that abandons a branch the instant it looks unrecoverable, rather than an underpriced or overpriced
+leg -- justifies proceeding rather than halting here.
